@@ -1,19 +1,32 @@
 import torch
-import torch.nn as nn
+import pyterrier as pt
 
-class NeuralRanker(nn.Module):
-    def __init__(self, base_model):
-        super().__init__()
-        self.base_model = base_model
-        self.ranking_head = nn.Linear(768, 1)  # Add a ranking head
+from transformers import AutoTokenizer, AutoModel
 
-    def forward(self, input_ids, attention_mask):
-        '''
-        input_ids: Tensor of shape (batch_size, max_length)
-        attention_mask: Tensor of shape (batch_size, max_length)
-        '''
+class NeuralRanker():
+    def __init__(self, model_name):
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModel.from_pretrained(model_name)
+                                               
+    #Mean Pooling - Take attention mask into account for correct averaging
+    def mean_pooling(self, model_output, attention_mask):
         
-        outputs = self.base_model(input_ids=input_ids, attention_mask=attention_mask)
-        cls_embedding = outputs.last_hidden_state[:, 0, :]  # CLS token embedding
-        score = self.ranking_head(cls_embedding)  # Predict relevance score
-        return score
+        token_embeddings = model_output.last_hidden_state
+        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        
+        return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+
+
+    #Encode text
+    def encode(self, texts):
+        # Tokenize sentences
+        encoded_input = self.tokenizer(texts, padding=True, truncation=True, return_tensors='pt')
+
+        # Compute token embeddings
+        with torch.no_grad():
+            model_output = self.model(**encoded_input, return_dict=True)
+
+        # Perform pooling
+        embeddings = self.mean_pooling(model_output, encoded_input['attention_mask'])
+
+        return embeddings

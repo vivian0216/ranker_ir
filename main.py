@@ -1,6 +1,8 @@
-from transformers import AutoTokenizer, AutoModel
 import torch
 import pyterrier as pt
+
+from transformers import AutoTokenizer, AutoModel
+from src.neural_ranker.ranker import NeuralRanker
 
 # Load the dataset
 dataset_bio = pt.get_dataset('irds:cord19/trec-covid')
@@ -29,52 +31,30 @@ with open("queries.txt", "w") as file:
     for query in queries:
         file.write(query + "\n")
 
-#Mean Pooling - Take attention mask into account for correct averaging
-def mean_pooling(model_output, attention_mask):
-    token_embeddings = model_output.last_hidden_state
-    input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-    return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-
-
-#Encode text
-def encode(texts):
-    # Tokenize sentences
-    encoded_input = tokenizer(texts, padding=True, truncation=True, return_tensors='pt')
-
-    # Compute token embeddings
-    with torch.no_grad():
-        model_output = model(**encoded_input, return_dict=True)
-
-    # Perform pooling
-    embeddings = mean_pooling(model_output, encoded_input['attention_mask'])
-
-    return embeddings
-
-
-# Sentences we want sentence embeddings for
-# query = "What are Clinical features of COVID-19?"
-# docs = ["Around 9 Million people live in London", "London is known for its financial district"]
 
 # Load model from HuggingFace Hub
-tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/msmarco-bert-base-dot-v5")
-model = AutoModel.from_pretrained("sentence-transformers/msmarco-bert-base-dot-v5")
+ranker = NeuralRanker("sentence-transformers/msmarco-bert-base-dot-v5")
 
-#Encode query and docs
-query_emb = encode(queries)
-doc_emb = encode(bio_docs)
+# Encode docs
+doc_emb = ranker.encode(bio_docs)
 
-#Compute dot score between query and all document embeddings
-scores = torch.mm(query_emb, doc_emb.transpose(0, 1))[0].cpu().tolist()
+# Encode queries, do this for each query
+for query in queries:
+    query_emb = ranker.encode(query)
 
-#Combine docs & scores
-doc_score_pairs = list(zip(bio_docs, scores))
+    #Compute dot score between query and all document embeddings
+    scores = torch.mm(query_emb, doc_emb.transpose(0, 1))[0].cpu().tolist()
 
-#Sort by decreasing score
-doc_score_pairs = sorted(doc_score_pairs, key=lambda x: x[1], reverse=True)
+    #Combine docs & scores
+    doc_score_pairs = list(zip(bio_docs, scores))
 
-#Output passages & scores
-for query in queries: 
+    #Sort by decreasing score
+    doc_score_pairs = sorted(doc_score_pairs, key=lambda x: x[1], reverse=True)
+
+    #Output passages & scores
     print("Query:", query)
     for doc, score in doc_score_pairs:
         print(score, doc)
-    
+        
+
+        
