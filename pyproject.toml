@@ -1,0 +1,30 @@
+[project]
+name = "ranker_ir"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "vivian",email = "viv16mei@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.9,<4.0"
+dependencies = [
+    "ragatouille (>=0.0.9,<0.0.10)",
+    "transformers (>=4.49.0,<5.0.0)",
+    "python-terrier (>=0.13.0,<0.14.0)",
+    "ir-datasets (>=0.5.10,<0.6.0)"
+
+]
+
+[tool.poetry]
+packages = [{include = "neural_ranker", from = "src"}]
+
+
+[tool.poetry.group.dev.dependencies]
+pylint = "^3.3.4"
+isort = "^6.0.1"
+black = "^25.1.0"
+pynvim = "^0.5.2"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
