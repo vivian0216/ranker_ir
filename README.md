@@ -1,4 +1,5 @@
-# ranker_ir
+# Efficient Domain Adaptation for
+Low-Resource IR Scenarios
 
 ## To run the file follow the following steps
 1. Set up environment in Python3.12, download the requirements.txt
