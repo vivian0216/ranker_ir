@@ -1,7 +1,6 @@
 import torch
 import pyterrier as pt
 
-from transformers import AutoTokenizer, AutoModel
 from src.neural_ranker.ranker import NeuralRanker
 
 # Load the dataset
