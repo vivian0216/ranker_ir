@@ -22,12 +22,12 @@ for doc in dataset_bio.get_corpus_iter():
     
 
 # Save docs in a file
-with open("docs.txt", "w") as file:
+with open("docs.txt", "w", encoding="utf-8") as file:
     for doc in bio_docs:
         file.write(doc + "\n")
         
 # Save queries in a file
-with open("queries.txt", "w") as file:
+with open("queries.txt", "w", encoding="utf-8") as file:
     for query in queries:
         file.write(query + "\n")
 
