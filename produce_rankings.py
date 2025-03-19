@@ -42,7 +42,7 @@ def collate_fn(batch):
 
 if __name__ == "__main__":
     batch_size = 128  # Adjust based on available memory
-    max_docs = 100  # STOP after processing this many documents
+    max_docs = 192509  # STOP after processing this many documents (for trec-covid there are 192509 documents, if you only rank 100 the evaluation will likely be a 0 for all metrics)
     dataset_name = 'irds:cord19/trec-covid'  # Change this to any IR dataset
     dataset = IRDataset(dataset_name, max_docs=max_docs)  # Load dataset with a limit
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
