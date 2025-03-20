@@ -1,59 +1,59 @@
 import torch
 import pyterrier as pt
+import pandas as pd
 
 from src.neural_ranker.ranker import NeuralRanker
+from src.neural_ranker.produce_rankings import IRDataset, Processor
 
-# Load the dataset
-dataset_bio = pt.get_dataset('irds:cord19/trec-covid')
-# dataset_gen = pt.get_dataset('irds:msmarco-passage')
+batch_size = 64
+max_docs = 192509
+dataset_name = 'irds:cord19/trec-covid'
 
-bio_docs = []
-queries = []
-counter = 0
-for doc in dataset_bio.get_corpus_iter():
-    # Extract documents from the dataset (this is the abstract of the documents with their docno)
-    bio_docs.append('docno: ' + doc['docno'] + ', abstract: ' + doc['abstract'])
-    # Extract queries from the dataset (this is the title of the documents)
-    queries.append('title: ' + doc['title'])
-    counter += 1
-    if counter > 15:
-        break
+# Step 1: Check for GPU
+mydevice = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {mydevice}")
+
+dataset = IRDataset(dataset_name, max_docs=max_docs)
+
+# Load Neural Ranker
+ranker = NeuralRanker("sentence-transformers/msmarco-bert-base-dot-v5", device=mydevice)
+
+processor = Processor()
+
+# Process documents
+doc_emb, docno_list = processor.process_documents_in_chunks(dataset, ranker, batch_size=batch_size, chunk_size=5000, device=mydevice)
+
+print("Document encoding complete. Now ranking queries...")
+
+# Load queries safely
+query_list = []
+
+if hasattr(dataset.dataset, 'get_topics'):
+    print("Loading actual queries from dataset...")
+    topics = dataset.dataset.get_topics()
+
+    print(f"Topics type: {type(topics)}")  # Debugging: Expecting a DataFrame
+    print(f"Topics columns: {topics.columns}")  # Print available columns
+
+    print(f"Total queries available: {len(topics)}")
+    print(topics.head())  # Show first few rows
+
+
+    query_list = topics['title'].tolist()  # Extract 'title' column as a list
+
+    if len(query_list) == 0:
+        print("Warning: No queries found in the dataset!")
+else:
+    query_list = [doc.get('title', doc.get('query', '')) for doc in dataset.doc_list[:100]]
+
+print(f"Loaded {len(query_list)} queries")
+
+
+# Rank queries
+ranked_results = processor.rank_queries_in_batches(query_list, doc_emb, docno_list, ranker, mydevice, max_docs_per_query_batch=10000)
+
+# Save results
+pd.DataFrame(ranked_results).to_csv("ranked_results.csv", index=False)
+print(f"Processing completed. {len(ranked_results)} ranking entries saved.")
+
     
-
-# Save docs in a file
-with open("docs.txt", "w", encoding="utf-8") as file:
-    for doc in bio_docs:
-        file.write(doc + "\n")
-        
-# Save queries in a file
-with open("queries.txt", "w", encoding="utf-8") as file:
-    for query in queries:
-        file.write(query + "\n")
-
-
-# Load model from HuggingFace Hub
-ranker = NeuralRanker("sentence-transformers/msmarco-bert-base-dot-v5")
-
-# Encode docs
-doc_emb = ranker.encode(bio_docs)
-
-# Encode queries, do this for each query
-for query in queries:
-    query_emb = ranker.encode(query)
-
-    #Compute dot score between query and all document embeddings
-    scores = torch.mm(query_emb, doc_emb.transpose(0, 1))[0].cpu().tolist()
-
-    #Combine docs & scores
-    doc_score_pairs = list(zip(bio_docs, scores))
-
-    #Sort by decreasing score
-    doc_score_pairs = sorted(doc_score_pairs, key=lambda x: x[1], reverse=True)
-
-    #Output passages & scores
-    print("Query:", query)
-    for doc, score in doc_score_pairs:
-        print(score, doc)
-        
-
-        

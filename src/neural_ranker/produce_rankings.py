@@ -224,7 +224,7 @@ if __name__ == "__main__":
 
 
     # Rank queries
-    ranked_results = processor.rank_queries_in_batches(query_list, doc_emb, docno_list, ranker, device, max_docs_per_query_batch=10000)
+    ranked_results = processor.rank_queries_in_batches(query_list, doc_emb, docno_list, ranker, mydevice, max_docs_per_query_batch=10000)
 
     # Save results
     pd.DataFrame(ranked_results).to_csv("ranked_results.csv", index=False)
