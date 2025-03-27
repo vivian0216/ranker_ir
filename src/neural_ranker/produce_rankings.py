@@ -7,7 +7,6 @@ from src.neural_ranker.ranker import NeuralRanker
 from tqdm import tqdm
 import gc  # For garbage collection
 
-# Step 2: Define a Generic Dataset Class with a Document Limit
 class IRDataset(Dataset):
     def __init__(self, dataset_name, max_docs=None):
         """
@@ -38,7 +37,6 @@ class Processor():
         self.combined_embeddings = None
         self.ranked_results = []
             
-    # Step 3: Use DataLoader for Efficient Batching
     def collate_fn(self, batch):
         """ Custom function to process a batch of documents. """
         return [b[0] for b in batch], [b[1] for b in batch]  # Separate text and docno
@@ -187,11 +185,13 @@ if __name__ == "__main__":
     mydevice = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {mydevice}")
 
+    # Step 2: Define a Generic Dataset Class with a Document Limit
     dataset = IRDataset(dataset_name, max_docs=max_docs)
 
     # Load Neural Ranker
     ranker = NeuralRanker("sentence-transformers/msmarco-bert-base-dot-v5", device=mydevice)
     
+    # Step 3: Use DataLoader for Efficient Batching
     processor = Processor()
 
     # Process documents
