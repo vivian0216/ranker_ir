@@ -11,13 +11,19 @@ dataset = IRDataset(dataset_name, max_docs=None)
 
 domain_texts = []
 for doc in dataset.doc_list:
-    if 'text' in doc:
-        domain_texts.append(doc['text'])
-    else:
-        domain_texts.append('')
+    combined = []
+    if 'title' in doc and isinstance(doc['title'], str):
+        combined.append(doc['title'])
+    if 'text' in doc and isinstance(doc['text'], str):
+        combined.append(doc['text'])
+    if 'url' in doc and isinstance(doc['url'], str):
+        combined.append(doc['url'])
+    domain_texts.append("\n".join(combined))
+
 print(f"Loaded {len(domain_texts)} documents for contrastive training.")
 
 print(domain_texts[0])
+print(domain_texts[1])
 
 # Initialize the augmentor (tweak dropout probability as needed)
 augmentor = TextAugmentor(dropout_prob=0.15)
@@ -25,10 +31,15 @@ augmentor = TextAugmentor(dropout_prob=0.15)
 # Create the contrastive dataset and dataloader
 contrastive_dataset = ContrastiveDataset(domain_texts, augmentor)
 
+print()
+
 # Print the contrastive dataset
 print(contrastive_dataset.__getitem__(0))
+print(contrastive_dataset.__getitem__(1))
 
 dataloader = DataLoader(contrastive_dataset, shuffle=True, batch_size=4)
+
+print()
 
 # Print the dataloader
 for batch in dataloader:
