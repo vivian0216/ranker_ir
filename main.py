@@ -4,6 +4,7 @@ import pandas as pd
 
 from src.neural_ranker.ranker import NeuralRanker
 from src.neural_ranker.produce_rankings import IRDataset, Processor
+from domain_adaptation import self_training_domain_adaptation
 
 batch_size = 64
 max_docs = 192509
@@ -14,6 +15,11 @@ mydevice = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {mydevice}")
 
 dataset = IRDataset(dataset_name, max_docs=max_docs)
+
+docno_to_abstract = {
+    doc['docno']: doc.get('abstract', doc.get('text', ''))
+    for doc in dataset.doc_list
+}
 
 # Load Neural Ranker
 ranker = NeuralRanker("sentence-transformers/msmarco-bert-base-dot-v5", device=mydevice)
@@ -48,6 +54,24 @@ else:
 
 print(f"Loaded {len(query_list)} queries")
 
+# # -------------------------------
+# # Domain Adaptation Phase
+# # -------------------------------
+# # Here we perform unsupervised domain adaptation using self-training with pseudo-labels.
+# # The approach uses BM25 to generate pseudo relevance labels and then fine-tunes the neural ranker.
+# print("Starting domain adaptation using self-training with pseudo-labels...")
+# ranker = self_training_domain_adaptation(
+#     ranker=ranker,
+#     q_list=query_list,
+#     dataset_name=dataset_name,  # target domain (e.g. TREC-COVID)
+#     docno_to_abstract=docno_to_abstract,
+#     pseudo_top_k=10,
+#     epochs=20,
+#     learning_rate=1e-5,
+#     device=mydevice,
+#     dataset=dataset,
+# )
+# print("Domain adaptation complete.")
 
 # Rank queries
 ranked_results = processor.rank_queries_in_batches(query_list, doc_emb, docno_list, ranker, mydevice, max_docs_per_query_batch=10000)
