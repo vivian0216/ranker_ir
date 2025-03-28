@@ -48,7 +48,7 @@ class Processor():
         """
         Process documents in manageable chunks to avoid memory issues.
         """
-        doc_embeddings_file = "doc_embeddings.pt"
+        doc_embeddings_file = "doc_embeddings.pt" #TODO: make the file names take the type of model into account so we have separate files for different models (zero-shot, etc.)
         docnos_file = "docnos.json"
 
         # Check if we can resume from saved embeddings
@@ -161,7 +161,7 @@ class Processor():
             # Store full ranking results
             for rank, idx in enumerate(sorted_indices):
                 self.ranked_results.append({
-                    "query_id": query_id,
+                    "query_id": query_id + 1,  # 1-based indexing
                     "query_text": query,
                     "docno": all_docnos[idx],
                     "rank": rank + 1,  # 1-based ranking
