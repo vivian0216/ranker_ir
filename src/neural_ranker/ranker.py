@@ -31,7 +31,8 @@ class NeuralRanker:
                 model_output = self.model(**encoded_input, return_dict=True)
         embeddings = self.mean_pooling(model_output, encoded_input['attention_mask'])
         return embeddings
-
+    
+ # Fine-tune method for self-training with pseudo-labels
     def fine_tune(self, pseudo_labels, epochs=20, learning_rate=1e-5, margin=0.5):
         # Set the model to training mode
         self.model.train()
@@ -41,61 +42,43 @@ class NeuralRanker:
             epoch_loss = 0.0
             # Loop over each query and its pseudo labels
             for q, pseudo_data in pseudo_labels.items():
-                if 'abstract' not in pseudo_data.columns or 'score' not in pseudo_data.columns:
-                    print("Required columns not found")
-                    continue
-
-                # Encode the query once with gradients enabled
+                
+                # Encode the query
                 query_embedding = self.encode([q], grad_enabled=True)
-
-                # Ensure there are enough documents to split into two groups
+                
+                if 'abstract' not in pseudo_data.columns:
+                    continue
+                doc_texts = pseudo_data['abstract'].tolist()
+                
+                doc_embeddings = self.encode(doc_texts)
+                
+                # Ensure there are at least two documents to form a positive and a negative pair
                 if pseudo_data.shape[0] < 2:
                     continue
-
-                # Determine the split index (e.g., half of the pseudo labels)
-                split_idx = pseudo_data.shape[0] // 2
-                positives = pseudo_data.iloc[:split_idx]
-                negatives = pseudo_data.iloc[split_idx:]
-
-                loss_sum = 0.0
-                total_weight = 0.0
-
-                # Iterate over all positive-negative pairs
-                for _, pos_row in positives.iterrows():
-                    pos_text = pos_row['abstract']
-                    pos_score = pos_row['score']
-                    # Encode positive document with gradient tracking
-                    pos_embedding = self.encode([pos_text], grad_enabled=True)
-                    for _, neg_row in negatives.iterrows():
-                        neg_text = neg_row['abstract']
-                        neg_score = neg_row['score']
-                        # Encode negative document with gradient tracking
-                        neg_embedding = self.encode([neg_text], grad_enabled=True)
-
-                        # Compute cosine similarities
-                        sim_pos = F.cosine_similarity(query_embedding, pos_embedding, dim=1)
-                        sim_neg = F.cosine_similarity(query_embedding, neg_embedding, dim=1)
-
-                        # Compute margin ranking loss for this pair
-                        loss_pair = F.relu(margin - sim_pos + sim_neg)
-
-                        # Calculate a weight based on the BM25 score difference.
-                        # The sigmoid ensures the weight is between 0 and 1.
-                        weight = torch.sigmoid(torch.tensor(pos_score - neg_score, dtype=torch.float32, device=self.device))
-                        
-                        loss_sum += weight * loss_pair
-                        total_weight += weight
-
-                if total_weight > 0:
-                    # Compute the weighted average loss over all pairs
-                    loss = loss_sum / total_weight
-                else:
-                    continue
-
+                
+                # Encode the query (shape: [1, embedding_dim])
+                query_embedding = self.encode([q])
+                
+                # Get the positive and negative document texts:
+                # Use the first document as positive and the last as negative.
+                pos_text = pseudo_data.iloc[0]['abstract']
+                neg_text = pseudo_data.iloc[-1]['abstract']
+                
+                # Encode the positive and negative documents (each shape: [1, embedding_dim])
+                pos_embedding = self.encode([pos_text], grad_enabled=True)
+                neg_embedding = self.encode([neg_text], grad_enabled=True)
+                
+                # Compute cosine similarities (each will be a tensor of shape [1])
+                sim_pos = F.cosine_similarity(query_embedding, pos_embedding, dim=1)
+                sim_neg = F.cosine_similarity(query_embedding, neg_embedding, dim=1)
+                
+                # Margin ranking loss: we want sim_pos to be higher than sim_neg by at least margin.
+                loss = F.relu(margin - sim_pos + sim_neg).mean()  # mean() over batch (here single value)
+                
                 optim.zero_grad()
                 loss.backward()
                 optim.step()
-
+                
                 epoch_loss += loss.item()
             print(f"Epoch {epoch+1}/{epochs} - Loss: {epoch_loss:.4f}")
 
