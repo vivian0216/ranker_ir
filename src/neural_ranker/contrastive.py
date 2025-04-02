@@ -1,10 +1,9 @@
+from .produce_rankings import IRDataset
 from .augmentor import TextAugmentor
 import torch
-from torch.utils.data import Dataset, DataLoader
-import torch.nn.functional as F
-from torch import nn, optim
-from .ranker import NeuralRanker
-
+from torch.utils.data import Dataset
+import time
+from tqdm import tqdm
 
 class ContrastiveDataset(Dataset):
     """
@@ -25,52 +24,153 @@ class ContrastiveDataset(Dataset):
         view2 = self.augmentor.augment(original)
         return view1, view2
 
+def load_domain_texts(dataset: IRDataset) -> list:
+    """
+    Load domain texts from the dataset.
+    """
+    print("Processing documents...")
+    domain_texts = []
+    for i, doc in enumerate(tqdm(dataset.doc_list, desc="Processing documents")):
+        combined = []
+        if 'title' in doc and isinstance(doc['title'], str):
+            combined.append(doc['title'])
+        if 'text' in doc and isinstance(doc['text'], str):
+            combined.append(doc['text'])
+        if 'url' in doc and isinstance(doc['url'], str):
+            combined.append(doc['url'])
+        domain_texts.append("\n".join(combined))
+
+    print(f"Loaded {len(domain_texts)} documents for contrastive training.")
+    return domain_texts
 
 class ContrastiveTrainer:
-    def __init__(self, encoder: NeuralRanker, lr=2e-5, device="cuda" if torch.cuda.is_available() else "cpu"):
-        self.encoder = encoder.to(device)
-        self.optimizer = optim.AdamW(self.encoder.parameters(), lr=lr)
+    def __init__(self, encoder, lr=1e-6, device="cpu"):
+        self.encoder = encoder
         self.device = device
-        self.criterion = nn.CrossEntropyLoss()  # InfoNCE loss uses cross-entropy
-
-    def compute_sim_matrix(self, emb1, emb2, temperature=0.05):
-        """
-        Given two batches of embeddings (N x D), compute the similarity matrix.
-        Here, we use cosine similarity scaled by temperature.
-        """
-        emb1 = F.normalize(emb1, p=2, dim=1)
-        emb2 = F.normalize(emb2, p=2, dim=1)
-        sim_matrix = torch.matmul(emb1, emb2.t()) / temperature
-        return sim_matrix
-
-    def train(self, dataloader: DataLoader, epochs=1):
+        self.optimizer = torch.optim.AdamW(self.encoder.parameters(), lr=lr)
+        
+    def encode_batch_with_grad(self, texts):
+        """Encode a batch of texts while maintaining the gradient graph"""
+        # Ensure model is in training mode
         self.encoder.train()
+        
+        # Get tokenized inputs directly from the model's tokenizer
+        inputs = self.encoder.tokenizer(
+            texts, 
+            padding=True, 
+            truncation=True, 
+            return_tensors="pt"
+        ).to(self.device)
+        
+        # Forward pass through the model to get embeddings
+        with torch.set_grad_enabled(True):
+            outputs = self.encoder.model(**inputs)
+            # Use mean pooling on token embeddings (common approach)
+            attention_mask = inputs['attention_mask'].unsqueeze(-1)
+            embeddings = torch.sum(outputs.last_hidden_state * attention_mask, 1) / torch.sum(attention_mask, 1)
+        
+        return embeddings
+        
+    def train(self, dataloader, epochs=3, patience=2, min_delta=0.001):
+        """
+        Train the model with early stopping.
+        
+        Args:
+            dataloader: DataLoader for training data
+            epochs: Maximum number of epochs to train
+            patience: Number of epochs to wait for improvement before stopping
+            min_delta: Minimum change in loss to qualify as an improvement
+        """
+        start_time = time.time()
+        print(f"\nTraining for up to {epochs} epochs with early stopping (patience={patience}, min_delta={min_delta})...")
+        
+        best_loss = float('inf')
+        patience_counter = 0
+        epoch_losses = []
+        
         for epoch in range(epochs):
-            total_loss = 0
-            for batch in dataloader:
-                # Each batch is a tuple: (list_of_view1, list_of_view2)
-                view1, view2 = batch  # both are lists of strings
-
-                # Move to device and get embeddings
-                emb1 = self.encoder(view1)  # shape: (batch_size, dim)
-                emb2 = self.encoder(view2)  # shape: (batch_size, dim)
-
-                # Compute similarity matrix: each row i is similarity between view1[i] and all view2
-                sim_matrix = self.compute_sim_matrix(emb1, emb2)  # shape: (batch_size, batch_size)
-
-                # The target for InfoNCE loss is that the i-th view in emb1 matches the i-th in emb2
-                targets = torch.arange(sim_matrix.size(0)).to(self.device)
-
-                # Compute loss in both directions (view1 -> view2 and view2 -> view1)
-                loss_a = self.criterion(sim_matrix, targets)
-                loss_b = self.criterion(sim_matrix.t(), targets)
-                loss = (loss_a + loss_b) / 2
-
-                # Backpropagate
+            epoch_start = time.time()
+            running_loss = 0.0
+            
+            # Progress bar
+            progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}")
+            
+            # Ensure model is in training mode
+            self.encoder.train()
+            
+            for i, batch in enumerate(progress_bar):
+                # Get texts from batch
+                anchor_texts, positive_texts = batch
+                
+                # Reset gradients
                 self.optimizer.zero_grad()
+                
+                # Forward pass with gradient tracking
+                anchor_embeddings = self.encode_batch_with_grad(anchor_texts)
+                positive_embeddings = self.encode_batch_with_grad(positive_texts)
+                
+                # Calculate similarity and loss
+                similarity = torch.nn.functional.cosine_similarity(anchor_embeddings, positive_embeddings)
+                loss = 1.0 - similarity.mean()  # Simple contrastive loss
+                
+                # Backward pass
                 loss.backward()
+                
+                # Update weights
                 self.optimizer.step()
+                
+                # Update statistics
+                running_loss += loss.item()
+                avg_loss = running_loss / (i + 1)
 
-                total_loss += loss.item()
+                if avg_loss < 0.001:
+                    print(f"Loss {avg_loss:.6f} is below threshold. Stopping early.")
+                    # torch.save(self.encoder.state_dict(), "early_stopped_model.pt")
+                    return epoch_losses
 
-            print(f"Epoch {epoch + 1}: Loss = {total_loss / len(dataloader):.4f}")
+                # Update progress bar
+                progress_bar.set_postfix({'loss': f'{avg_loss:.4f}'})
+                
+                # Free memory
+                del anchor_embeddings, positive_embeddings, loss
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                
+                # Print progress periodically
+                if (i + 1) % 500 == 0:
+                    print(f"Processed {i+1}/{len(dataloader)} batches, current loss: {avg_loss:.4f}")
+            
+            # Calculate average loss for this epoch
+            epoch_avg_loss = running_loss / len(dataloader)
+            epoch_losses.append(epoch_avg_loss)
+            
+            epoch_time = time.time() - epoch_start
+            print(f"Epoch {epoch+1}/{epochs} completed in {epoch_time:.2f}s - Avg Loss: {epoch_avg_loss:.4f}")
+            
+            # Check for early stopping
+            if epoch_avg_loss < best_loss - min_delta:
+                # We found a better model
+                improvement = best_loss - epoch_avg_loss
+                best_loss = epoch_avg_loss
+                patience_counter = 0
+                print(f"Loss improved by {improvement:.4f}. Saving best model...")
+                
+                # Save the best model
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                best_model_path = f"best_domain_adapted_model_{timestamp}.pt"
+                torch.save(self.encoder.state_dict(), best_model_path)
+                
+            else:
+                # No improvement
+                patience_counter += 1
+                print(f"No improvement in loss. Patience: {patience_counter}/{patience}")
+                
+                if patience_counter >= patience:
+                    print(f"Early stopping triggered after {epoch+1} epochs")
+                    break
+        
+        total_time = time.time() - start_time
+        print(f"Training completed in {total_time:.2f}s")
+        
+        return epoch_losses

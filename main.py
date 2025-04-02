@@ -9,7 +9,8 @@ from src.llm.llm import LLM_zeroshot, LLM_query_exp
 from domain_adaptation import self_training_domain_adaptation
 
 
-
+# after training contrastive model, load the domain-adapted model
+# ranker.load_state_dict(torch.load("domain_adapted_model.pt", map_location=mydevice))
 
 
 def neural_ranker(fine_tune_with_pseudo_labels_BM25=True):
