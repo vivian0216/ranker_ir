@@ -6,9 +6,13 @@ from src.neural_ranker.ranker import NeuralRanker
 from src.neural_ranker.import_datasets import GetDataset
 from src.neural_ranker.produce_rankings import IRDataset, Processor
 from src.llm.llm import LLM_zeroshot, LLM_query_exp
+from domain_adaptation import self_training_domain_adaptation
 
 
-def neural_ranker():
+
+
+
+def neural_ranker(fine_tune_with_pseudo_labels_BM25=True):
     batch_size = 64
     max_docs = 192509
     dataset_name = 'irds:cord19/trec-covid'
@@ -18,6 +22,12 @@ def neural_ranker():
     print(f"Using device: {mydevice}")
 
     dataset = IRDataset(dataset_name, max_docs=max_docs)
+
+    if fine_tune_with_pseudo_labels_BM25:
+        docno_to_abstract = {
+            doc['docno']: doc.get('abstract', doc.get('text', ''))
+            for doc in dataset.doc_list
+        }
 
     # Load Neural Ranker
     ranker = NeuralRanker("sentence-transformers/msmarco-bert-base-dot-v5", device=mydevice)
@@ -59,6 +69,22 @@ def neural_ranker():
         query_list = [doc.get('title', doc.get('query', '')) for doc in dataset.doc_list[:100]]
 
     print(f"Loaded {len(query_list)} queries")
+
+    if fine_tune_with_pseudo_labels_BM25:
+        ranker = self_training_domain_adaptation(
+            ranker=ranker,
+            q_list=query_list,
+            dataset_name=dataset_name,  # target domain (e.g. TREC-COVID)
+            docno_to_abstract=docno_to_abstract,
+            pseudo_top_k=1500,
+            epochs=3,
+            lr=1e-5,
+            device=mydevice,
+            dataset=dataset,
+        )
+        print("Domain adaptation complete.")
+
+        doc_emb, docno_list = processor.process_documents_in_chunks(dataset, ranker, batch_size=batch_size, chunk_size=5000, device=mydevice)
 
     # Rank queries
     ranked_results = processor.rank_queries_in_batches(query_list, doc_emb, docno_list, ranker, mydevice, max_docs_per_query_batch=1000)
@@ -113,5 +139,6 @@ if __name__ == "__main__":
     # Run the base Neural Ranker to rank queries and documents
     # Extract the queries from the dataset
     # This will be used for the LLM ranker.
-    dataset, query_list = neural_ranker()
+    fine_tune_with_pseudo_labels_BM25 = True
+    dataset, query_list = neural_ranker(fine_tune_with_pseudo_labels_BM25)
     # llm_ranker(query_list, dataset)
