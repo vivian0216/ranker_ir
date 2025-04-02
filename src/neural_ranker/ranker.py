@@ -1,9 +1,11 @@
 import torch
 import pyterrier as pt
 from transformers import AutoTokenizer, AutoModel
+from torch import nn
 
-class NeuralRanker:
+class NeuralRanker(nn.Module):
     def __init__(self, model_name, device=None):
+        super(NeuralRanker, self).__init__()
         # Detect GPU if available
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
@@ -31,5 +33,16 @@ class NeuralRanker:
             model_output = self.model(**encoded_input, return_dict=True)  # Model runs on GPU
 
         # Perform pooling and return embeddings
+        embeddings = self.mean_pooling(model_output, encoded_input['attention_mask'])
+        return embeddings
+
+    def forward(self, texts):
+        # Tokenize input texts
+        encoded_input = self.tokenizer(texts, padding=True, truncation=True, return_tensors='pt')
+        # Move tensors to same device as model
+        device = next(self.model.parameters()).device
+        encoded_input = {k: v.to(device) for k, v in encoded_input.items()}
+        # Forward pass WITHOUT torch.no_grad() so gradients are computed
+        model_output = self.model(**encoded_input, return_dict=True)
         embeddings = self.mean_pooling(model_output, encoded_input['attention_mask'])
         return embeddings
