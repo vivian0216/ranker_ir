@@ -61,7 +61,7 @@ ranker = self_training_domain_adaptation(
     docno_to_abstract=docno_to_abstract,
     pseudo_top_k=1500,
     epochs=3,
-    learning_rate=1e-5,
+    lr=1e-5,
     device=mydevice,
     dataset=dataset,
 )
