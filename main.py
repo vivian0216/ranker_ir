@@ -43,31 +43,49 @@ def neural_ranker(fine_tune_with_pseudo_labels_BM25=True):
     # Load queries safely
     query_list = []
 
-    if hasattr(dataset.dataset, 'get_topics'):
-        print("Loading actual queries from dataset...")
-        topics = dataset.dataset.get_topics()
+    if fine_tune_with_pseudo_labels_BM25:
+        if hasattr(dataset.dataset, 'get_topics'):
+            print("Loading actual queries from dataset...")
+            topics = dataset.dataset.get_topics()
 
-        print(f"Topics type: {type(topics)}")  # Debugging: Expecting a DataFrame
-        print(f"Topics columns: {topics.columns}")  # Print available columns
+            print(f"Topics type: {type(topics)}")  # Debugging: Expecting a DataFrame
+            print(f"Topics columns: {topics.columns}")  # Print available columns
 
-        print(f"Total queries available: {len(topics)}")
-        print(topics.head())  # Show first few rows
+            print(f"Total queries available: {len(topics)}")
+            print(topics.head())  # Show first few rows
 
-        # Convert DataFrame to list of strings
-        # Keep in mind that qid 1 is now the first query so 0.
-        '''
-        ["title; description; narrative",
-        "title; description; narrative", ...]
-        '''
-        query_list = [
-            f"{row['title']}; {row['description']}; {row['narrative']}"
-            for _, row in topics.iterrows()
-        ]
+            query_list = topics['title'].tolist()  # Extract 'title' column as a list
 
-        if len(query_list) == 0:
-            print("Warning: No queries found in the dataset!")
+            if len(query_list) == 0:
+                print("Warning: No queries found in the dataset!")
+        else:
+            query_list = [doc.get('title', doc.get('query', '')) for doc in dataset.doc_list[:100]]
     else:
-        query_list = [doc.get('title', doc.get('query', '')) for doc in dataset.doc_list[:100]]
+        if hasattr(dataset.dataset, 'get_topics'):
+            print("Loading actual queries from dataset...")
+            topics = dataset.dataset.get_topics()
+
+            print(f"Topics type: {type(topics)}")  # Debugging: Expecting a DataFrame
+            print(f"Topics columns: {topics.columns}")  # Print available columns
+
+            print(f"Total queries available: {len(topics)}")
+            print(topics.head())  # Show first few rows
+
+            # Convert DataFrame to list of strings
+            # Keep in mind that qid 1 is now the first query so 0.
+            '''
+            ["title; description; narrative",
+            "title; description; narrative", ...]
+            '''
+            query_list = [
+                f"{row['title']}; {row['description']}; {row['narrative']}"
+                for _, row in topics.iterrows()
+            ]
+
+            if len(query_list) == 0:
+                print("Warning: No queries found in the dataset!")
+        else:
+            query_list = [doc.get('title', doc.get('query', '')) for doc in dataset.doc_list[:100]]
 
     print(f"Loaded {len(query_list)} queries")
 
