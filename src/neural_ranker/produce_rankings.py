@@ -30,6 +30,9 @@ class IRDataset(Dataset):
         doc = self.doc_list[idx]
         text = f"docno: {doc['docno']}, content: {doc.get('abstract', doc.get('text', ''))}"  # Handle different datasets
         return text, doc['docno']  # Also return docno for saving rankings
+    
+    def get_doc(self):
+        pass
 
 class Processor():
     def __init__(self):
