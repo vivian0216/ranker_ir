@@ -18,6 +18,9 @@ dataset = IRDataset(dataset_name, max_docs=max_docs)
 # Load Neural Ranker
 ranker = NeuralRanker("sentence-transformers/msmarco-bert-base-dot-v5", device=mydevice)
 
+# after training contrastive model, load the domain-adapted model
+ranker.load_state_dict(torch.load("domain_adapted_model.pt", map_location=mydevice))
+
 processor = Processor()
 
 # Process documents
@@ -53,7 +56,7 @@ print(f"Loaded {len(query_list)} queries")
 ranked_results = processor.rank_queries_in_batches(query_list, doc_emb, docno_list, ranker, mydevice, max_docs_per_query_batch=10000)
 
 # Save results
-pd.DataFrame(ranked_results).to_csv("ranked_results.csv", index=False)
+pd.DataFrame(ranked_results).to_csv("ranked_results_early_stopped_model.csv", index=False)
 print(f"Processing completed. {len(ranked_results)} ranking entries saved.")
 
     
