@@ -74,7 +74,7 @@ def evaluate_rankings(model, dataset_name, metrics_cutoff=10, should_do_per_quer
     # Evaluate using PyTerrier's newer Evaluate class
     try:
         # Use newer pt.Evaluate approach to avoid the deprecation warning
-        results = pt.Evaluate(pt_rankings, qrels, metrics=metrics)
+        results = pt.Evaluate(pt_rankings, qrels, metrics=metrics, metrics_cutoff=100)
         
         print("\n=== Evaluation Results ===")
         for metric, value in results.items():
