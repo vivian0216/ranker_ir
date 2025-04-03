@@ -19,7 +19,7 @@ def rank_with_base_model(dataset: IRDataset, mydevice):
     doc_embeddings_file = "embeddings\\base_doc_embeddings.pt"
     docnos_file = "embeddings\\base_docnos.pt"
 
-    doc_emb, docnos = processor.process_documents_in_chunks(dataset, ranker, batch_size=64, chunk_size=5000, device=mydevice, 
+    doc_emb, docnos = processor.process_documents_in_chunks(dataset, ranker, batch_size=16, chunk_size=5000, device=mydevice,
                                                             doc_embeddings_file=doc_embeddings_file,
                                                             docnos_file=docnos_file)
     print("Document encoding complete. Now ranking queries...")
@@ -42,7 +42,7 @@ def rank_with_base_model(dataset: IRDataset, mydevice):
 def contrastive_train_neural_ranker(
     dataset_name='irds:beir/trec-covid',
     model_name="sentence-transformers/msmarco-bert-base-dot-v5",
-    batch_size=8,
+    batch_size=2,
     epochs=3,
     device=None,
 ):
@@ -111,7 +111,7 @@ def rank_with_contrastive_model(dataset: IRDataset, mydevice):
     doc_embeddings_file = "embeddings\\contrastive_doc_embeddings.pt"
     docnos_file = "embeddings\\contrastive_docnos.pt"
 
-    doc_emb, docnos = processor.process_documents_in_chunks(dataset, ranker, batch_size=64, chunk_size=5000, device=mydevice, 
+    doc_emb, docnos = processor.process_documents_in_chunks(dataset, ranker, batch_size=16, chunk_size=5000, device=mydevice,
                                                             doc_embeddings_file=doc_embeddings_file,
                                                             docnos_file=docnos_file)
     print("Document encoding complete. Now ranking queries...")
@@ -169,7 +169,7 @@ def rank_with_pseudo_labels_model(dataset: IRDataset, mydevice):
     doc_embeddings_file = "embeddings\\pseudo_labels_doc_embeddings.pt"
     docnos_file = "embeddings\\pseudo_labels_docnos.pt"
 
-    doc_emb, docnos = processor.process_documents_in_chunks(dataset, ranker, batch_size=64, chunk_size=5000, device=mydevice, 
+    doc_emb, docnos = processor.process_documents_in_chunks(dataset, ranker, batch_size=16, chunk_size=5000, device=mydevice,
                                                             doc_embeddings_file=doc_embeddings_file,
                                                             docnos_file=docnos_file)
     print("Document encoding complete. Now ranking queries...")

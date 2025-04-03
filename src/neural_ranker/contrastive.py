@@ -4,6 +4,7 @@ import torch
 from torch.utils.data import Dataset
 import time
 from tqdm import tqdm
+import torch.nn.functional as F
 
 class ContrastiveDataset(Dataset):
     """
@@ -44,10 +45,12 @@ def load_domain_texts(dataset: IRDataset) -> list:
     return domain_texts
 
 class ContrastiveTrainer:
-    def __init__(self, encoder, lr=1e-6, device="cpu"):
+    def __init__(self, encoder, lr=1e-6, device="cpu", temperature=0.7):
         self.encoder = encoder
         self.device = device
+        self.temperature = temperature
         self.optimizer = torch.optim.AdamW(self.encoder.parameters(), lr=lr)
+        self.criterion = torch.nn.CrossEntropyLoss()
         
     def encode_batch_with_grad(self, texts):
         """Encode a batch of texts while maintaining the gradient graph"""
@@ -88,58 +91,106 @@ class ContrastiveTrainer:
         patience_counter = 0
         epoch_losses = []
         
+        # for epoch in range(epochs):
+        #     epoch_start = time.time()
+        #     running_loss = 0.0
+        #
+        #     # Progress bar
+        #     progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}")
+        #
+        #     # Ensure model is in training mode
+        #     self.encoder.train()
+        #
+        #     for i, batch in enumerate(progress_bar):
+        #         # Get texts from batch
+        #         anchor_texts, positive_texts = batch
+        #
+        #         # Reset gradients
+        #         self.optimizer.zero_grad()
+        #
+        #         # Forward pass with gradient tracking
+        #         anchor_embeddings = self.encode_batch_with_grad(anchor_texts)
+        #         positive_embeddings = self.encode_batch_with_grad(positive_texts)
+        #
+        #         # Calculate similarity and loss
+        #         similarity = torch.nn.functional.cosine_similarity(anchor_embeddings, positive_embeddings)
+        #         loss = 1.0 - similarity.mean()  # Simple contrastive loss
+        #
+        #         # Backward pass
+        #         loss.backward()
+        #
+        #         # Update weights
+        #         self.optimizer.step()
+        #
+        #         # Update statistics
+        #         running_loss += loss.item()
+        #         avg_loss = running_loss / (i + 1)
+        #
+        #         if avg_loss < 0.001:
+        #             print(f"Loss {avg_loss:.6f} is below threshold. Stopping early.")
+        #             # torch.save(self.encoder.state_dict(), "early_stopped_model.pt")
+        #             return epoch_losses
+        #
+        #         # Update progress bar
+        #         progress_bar.set_postfix({'loss': f'{avg_loss:.4f}'})
+        #
+        #         # Free memory
+        #         del anchor_embeddings, positive_embeddings, loss
+        #         if torch.cuda.is_available():
+        #             torch.cuda.empty_cache()
+        #
+        #         # Print progress periodically
+        #         if (i + 1) % 500 == 0:
+        #             print(f"Processed {i+1}/{len(dataloader)} batches, current loss: {avg_loss:.4f}")
         for epoch in range(epochs):
             epoch_start = time.time()
             running_loss = 0.0
-            
-            # Progress bar
-            progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}")
-            
-            # Ensure model is in training mode
+            progress_bar = tqdm(dataloader, desc=f"Epoch {epoch + 1}/{epochs}")
             self.encoder.train()
-            
+
             for i, batch in enumerate(progress_bar):
-                # Get texts from batch
-                anchor_texts, positive_texts = batch
-                
-                # Reset gradients
+                # Each batch is a tuple: (list_of_view1, list_of_view2)
+                view1, view2 = batch
+
                 self.optimizer.zero_grad()
-                
-                # Forward pass with gradient tracking
-                anchor_embeddings = self.encode_batch_with_grad(anchor_texts)
-                positive_embeddings = self.encode_batch_with_grad(positive_texts)
-                
-                # Calculate similarity and loss
-                similarity = torch.nn.functional.cosine_similarity(anchor_embeddings, positive_embeddings)
-                loss = 1.0 - similarity.mean()  # Simple contrastive loss
-                
-                # Backward pass
+
+                # Compute embeddings for both views
+                emb1 = self.encode_batch_with_grad(view1)
+                emb2 = self.encode_batch_with_grad(view2)
+
+                # Normalize embeddings for cosine similarity equivalence
+                emb1 = F.normalize(emb1, p=2, dim=1)
+                emb2 = F.normalize(emb2, p=2, dim=1)
+
+                # Compute similarity matrix and apply temperature scaling
+                sim_matrix = torch.matmul(emb1, emb2.t()) / self.temperature
+
+                # Create target labels (diagonal elements are positives)
+                targets = torch.arange(sim_matrix.size(0)).to(self.device)
+
+                # Compute loss in both directions
+                loss_a = self.criterion(sim_matrix, targets)
+                loss_b = self.criterion(sim_matrix.t(), targets)
+                loss = (loss_a + loss_b) / 2
+
                 loss.backward()
-                
-                # Update weights
                 self.optimizer.step()
-                
-                # Update statistics
+
                 running_loss += loss.item()
                 avg_loss = running_loss / (i + 1)
+                progress_bar.set_postfix({'loss': f'{avg_loss:.4f}'})
 
                 if avg_loss < 0.001:
                     print(f"Loss {avg_loss:.6f} is below threshold. Stopping early.")
-                    # torch.save(self.encoder.state_dict(), "early_stopped_model.pt")
                     return epoch_losses
 
-                # Update progress bar
-                progress_bar.set_postfix({'loss': f'{avg_loss:.4f}'})
-                
-                # Free memory
-                del anchor_embeddings, positive_embeddings, loss
+                if (i + 1) % 500 == 0:
+                    print(f"Processed {i + 1}/{len(dataloader)} batches, current loss: {avg_loss:.4f}")
+
+                del emb1, emb2, loss
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-                
-                # Print progress periodically
-                if (i + 1) % 500 == 0:
-                    print(f"Processed {i+1}/{len(dataloader)} batches, current loss: {avg_loss:.4f}")
-            
+
             # Calculate average loss for this epoch
             epoch_avg_loss = running_loss / len(dataloader)
             epoch_losses.append(epoch_avg_loss)
