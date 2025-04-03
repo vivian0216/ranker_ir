@@ -210,8 +210,8 @@ def llm_ranker(queries, dataset: IRDataset):
     # print(f"Top 100 results for each query: {top_100_per_query}")
     
     # Dataframe to store the results
-    df_top100_zero = pd.DataFrame(columns=["qid", "docno", "score"])
-    df_top100_few = pd.DataFrame(columns=["qid", "docno", "score"])
+    df_top100_zero = pd.DataFrame(columns=["query_id", "docno", "score"])
+    df_top100_few = pd.DataFrame(columns=["query_id", "docno", "score"])
     
     for qid in top_100_per_query:
         docnos = top_100_per_query[qid]
@@ -281,17 +281,25 @@ def llm_ranker(queries, dataset: IRDataset):
             score_zero = openai.call(prompt_zero)
             score_few = openai.call(prompt_few)
             
+            # Force the scores to be float values
+            try:
+                score_zero = float(score_zero)
+                score_few = float(score_few)
+            except ValueError:
+                score_zero = 0.0
+                score_few = 0.0
+            
             # Logging purposes
             print(f"Zero-shot: Query {qid} and Docno {docno} processed. Result: {score_zero}")
             print(f"Few-shot: Query {qid} and Docno {docno} processed. Result: {score_few}")
             
             # Add the result and qid to the dataframe
-            df_top100_zero = pd.concat([df_top100_zero, pd.DataFrame({"qid": [qid], "docno": [docno], "score": [score_zero]})], ignore_index=True)
-            df_top100_few = pd.concat([df_top100_few, pd.DataFrame({"qid": [qid], "docno": [docno], "score": [score_few]})], ignore_index=True)
+            df_top100_zero = pd.concat([df_top100_zero, pd.DataFrame({"query_id": [qid], "docno": [docno], "score": [score_zero]})], ignore_index=True)
+            df_top100_few = pd.concat([df_top100_few, pd.DataFrame({"query_id": [qid], "docno": [docno], "score": [score_few]})], ignore_index=True)
             
     # Rank the results based on the score
-    df_top100_zero = df_top100_zero.sort_values(by=["qid", "score"], ascending=[True, False])
-    df_top100_few = df_top100_few.sort_values(by=["qid", "score"], ascending=[True, False])
+    df_top100_zero = df_top100_zero.sort_values(by=["query_id", "score"], ascending=[True, False])
+    df_top100_few = df_top100_few.sort_values(by=["query_id", "score"], ascending=[True, False])
     # Save the result to a CSV file, with the first line as the column names.
     df_top100_zero.to_csv("rankings/llm_zero_rankings.csv", mode='a', index=False, header=True)
     df_top100_few.to_csv("rankings/llm_few_rankings.csv", mode='a', index=False, header=True)
