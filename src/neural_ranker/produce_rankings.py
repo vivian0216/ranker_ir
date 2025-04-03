@@ -52,15 +52,17 @@ class Processor():
         return [b[0] for b in batch], [b[1] for b in batch]  # Separate text and docno
 
     # Function to process documents in chunks to save memory
-    def process_documents_in_chunks(self, dataset, ranker, device, batch_size=128, chunk_size=5000):
+    def process_documents_in_chunks(self, dataset, ranker, device, batch_size=128, chunk_size=5000, doc_embeddings_file=None, docnos_file=None):
         """
         Process documents in manageable chunks to avoid memory issues.
         """
-        doc_embeddings_file = "doc_embeddings.pt" #TODO: make the file names take the type of model into account so we have separate files for different models (zero-shot, etc.)
-        docnos_file = "docnos.json"
+        # doc_embeddings_file = "doc_embeddings.pt" #TODO: make the file names take the type of model into account so we have separate files for different models (zero-shot, etc.)
+        # docnos_file = "docnos.json"
 
         # Check if we can resume from saved embeddings
         try:
+            if doc_embeddings_file is None or docnos_file is None:
+                raise FileNotFoundError("Embedding files not provided for resuming.")
             print("Checking for existing embeddings...")
             doc_emb = torch.load(doc_embeddings_file, weights_only=True)  # Use safe loading
             with open(docnos_file, 'r') as f:

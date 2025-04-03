@@ -1,61 +1,78 @@
 import torch
 from torch.utils.data import DataLoader
 
-from src.neural_ranker.contrastive import ContrastiveDataset, ContrastiveTrainer
+from src.neural_ranker.contrastive import ContrastiveDataset, ContrastiveTrainer, load_domain_texts
 from src.neural_ranker.produce_rankings import IRDataset
 from src.neural_ranker.ranker import NeuralRanker
 from src.neural_ranker.augmentor import TextAugmentor
 
-dataset_name = 'irds:beir/trec-covid'
-dataset = IRDataset(dataset_name, max_docs=None)
 
-domain_texts = []
-for doc in dataset.doc_list:
-    combined = []
-    if 'title' in doc and isinstance(doc['title'], str):
-        combined.append(doc['title'])
-    if 'text' in doc and isinstance(doc['text'], str):
-        combined.append(doc['text'])
-    if 'url' in doc and isinstance(doc['url'], str):
-        combined.append(doc['url'])
-    domain_texts.append("\n".join(combined))
+if __name__ == "__main__":
+    # Check for GPU
+    mydevice = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {mydevice}")
 
-print(f"Loaded {len(domain_texts)} documents for contrastive training.")
+    if torch.cuda.is_available():
+        gpu_mem_total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        gpu_mem_reserved = torch.cuda.memory_reserved(0) / 1024**3
+        gpu_mem_allocated = torch.cuda.memory_allocated(0) / 1024**3
+        gpu_mem_free = gpu_mem_total - gpu_mem_reserved
+        print(f"GPU Memory: Total: {gpu_mem_total:.2f}GB, Reserved: {gpu_mem_reserved:.2f}GB, "
+            f"Allocated: {gpu_mem_allocated:.2f}GB, Free: {gpu_mem_free:.2f}GB")
 
-print(domain_texts[0])
-print(domain_texts[1])
+    # Load dataset with progress reporting
+    print("Loading dataset...")
+    dataset_name = 'irds:beir/trec-covid'
+    dataset = IRDataset(dataset_name, max_docs=None)
 
-# Initialize the augmentor (tweak dropout probability as needed)
-augmentor = TextAugmentor(dropout_prob=0.15)
+    domain_texts = load_domain_texts(dataset=dataset)
 
-# Create the contrastive dataset and dataloader
-contrastive_dataset = ContrastiveDataset(domain_texts, augmentor)
+    # Initialize the augmentor
+    print("\nInitializing augmentor...")
+    augmentor = TextAugmentor(shuffle_sentences=True)
 
-print()
+    # Create the contrastive dataset
+    print("Creating contrastive dataset...")
+    contrastive_dataset = ContrastiveDataset(domain_texts, augmentor)
 
-# Print the contrastive dataset
-print(contrastive_dataset.__getitem__(0))
-print(contrastive_dataset.__getitem__(1))
+    # Sample pairs
+    # print("\nSample contrastive pairs:")
+    # print("Pair 1:", [text[:50] + "..." for text in contrastive_dataset.__getitem__(0)])
+    # print("Pair 2:", [text[:50] + "..." for text in contrastive_dataset.__getitem__(1)])
 
-dataloader = DataLoader(contrastive_dataset, shuffle=True, batch_size=4)
+    # Create dataloader
+    print("\nCreating dataloader...")
+    batch_size = 8  # Adjusted for GPU memory
+    dataloader = DataLoader(
+        contrastive_dataset, 
+        shuffle=True, 
+        batch_size=batch_size,
+    )
 
-print()
+    print(f"\nDataloader configuration: batch_size={batch_size}, num_workers=0")
 
-# Print the dataloader
-for batch in dataloader:
-    print(batch)
-    break
+    # Initialize model
+    print("\nInitializing model...")
+    model_name = "sentence-transformers/msmarco-bert-base-dot-v5"
+    encoder = NeuralRanker(model_name, device=mydevice)
 
-# Initialize your NeuralRanker model (encoder)
-model_name = "sentence-transformers/msmarco-bert-base-dot-v5"
-encoder = NeuralRanker(model_name)
+    # Enable gradients for all parameters
+    for param in encoder.parameters():
+        param.requires_grad = True
 
-for param in encoder.parameters():
-    param.requires_grad = True
+    # Print trainable parameters
+    trainable_params = sum(p.numel() for p in encoder.parameters() if p.requires_grad)
+    print(f"Model has {trainable_params:,} trainable parameters")
 
-trainer = ContrastiveTrainer(encoder, lr=2e-5)
+    # Create trainer
+    print("\nInitializing trainer...")
+    trainer = ContrastiveTrainer(encoder, lr=2e-5, device=mydevice)
 
-# Train for a few epochs
-trainer.train(dataloader, epochs=3)
+    # Train for specified epochs
+    trainer.train(dataloader, epochs=3)
 
-torch.save(encoder.state_dict(), "domain_adapted_model.pt")
+    model_path = f"models\domain_adapted_model.pt"
+
+    print(f"\nSaving model to {model_path}...")
+    torch.save(encoder.state_dict(), model_path)
+    print("Model saved successfully!")

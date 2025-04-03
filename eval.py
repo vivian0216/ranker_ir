@@ -3,8 +3,16 @@ import pyterrier as pt
 import numpy as np
 from tqdm import tqdm
 import os
+from enum import Enum
 
-def evaluate_rankings(ranked_results_path, dataset_name, metrics_cutoff=10, should_do_per_query=True, save_location=""):
+class Model(Enum):
+    BASE = "base"
+    CONTRASTIVE = "contrastive"
+    PSEUDO_LABELS = "pseudo_labels"
+    LLM = "llm"
+
+
+def evaluate_rankings(model, dataset_name, metrics_cutoff=10, should_do_per_query=True):
     """
     Evaluate rankings using standard IR metrics at specified cutoff.
     
@@ -20,6 +28,9 @@ def evaluate_rankings(ranked_results_path, dataset_name, metrics_cutoff=10, shou
     """
     print(f"Evaluating rankings with metrics@{metrics_cutoff}...")
     
+    ranked_results_path = "rankings/" + model.value + "_rankings.csv"  # Path to the ranked results from the main script
+    save_location = "evaluation_results/" + model.value  # Save location for evaluation results
+
     # Load rankings
     if not os.path.exists(ranked_results_path):
         raise FileNotFoundError(f"Rankings file not found: {ranked_results_path}")
