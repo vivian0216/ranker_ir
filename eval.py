@@ -11,7 +11,6 @@ class Model(Enum):
     PSEUDO_LABELS = "pseudo_labels"
     LLMZERO = "llm_zero"
     LLMFEW = "llm_few"
-    LLMFINE = "llm_fine"
 
 
 def evaluate_rankings(model, dataset_name, metrics_cutoff=10, should_do_per_query=True):
