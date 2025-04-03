@@ -5,15 +5,12 @@ from torch.utils.data import DataLoader
 
 from src.neural_ranker.ranker import NeuralRanker
 from src.neural_ranker.produce_rankings import IRDataset, Processor
-from src.llm.llm import LLM_zeroshot, LLM_query_exp
+from src.llm.llm import LLM_deepseek, OpenAILLM
 from domain_adaptation import self_training_domain_adaptation
 from src.neural_ranker.contrastive import ContrastiveDataset, ContrastiveTrainer, load_domain_texts
 from src.neural_ranker.produce_rankings import IRDataset
 from src.neural_ranker.ranker import NeuralRanker
 from src.neural_ranker.augmentor import TextAugmentor
-
-
-
 
 def rank_with_base_model(dataset: IRDataset, mydevice):
     ranker = NeuralRanker("sentence-transformers/msmarco-bert-base-dot-v5", device=mydevice)
@@ -38,6 +35,8 @@ def rank_with_base_model(dataset: IRDataset, mydevice):
 
     # Save results
     pd.DataFrame(ranked_results).to_csv("rankings\\base_rankings.csv", index=False)
+    
+    return query_list
 
 
 def contrastive_train_neural_ranker(
@@ -187,127 +186,19 @@ def rank_with_pseudo_labels_model(dataset: IRDataset, mydevice):
     # Save results
     pd.DataFrame(ranked_results).to_csv("rankings\\pseudo_labels_rankings.csv", index=False)
 
-def neural_ranker(fine_tune_with_pseudo_labels_BM25=True):
-    batch_size = 64
-    max_docs = 192509
-    dataset_name = 'irds:cord19/trec-covid'
-
-    # Step 1: Check for GPU
-    mydevice = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {mydevice}")
-
-    dataset = IRDataset(dataset_name, max_docs=max_docs)
-
-    if fine_tune_with_pseudo_labels_BM25:
-        docno_to_abstract = {
-            doc['docno']: doc.get('abstract', doc.get('text', ''))
-            for doc in dataset.doc_list
-        }
-
-    # Load Neural Ranker
-    ranker = NeuralRanker("sentence-transformers/msmarco-bert-base-dot-v5", device=mydevice)
-
-    processor = Processor()
-
-    # Process documents
-    doc_emb, docno_list = processor.process_documents_in_chunks(dataset, ranker, batch_size=batch_size, chunk_size=5000, device=mydevice)
-
-    print("Document encoding complete. Now ranking queries...")
-
-    # Load queries safely
-    query_list = []
-
-    if fine_tune_with_pseudo_labels_BM25:
-        if hasattr(dataset.dataset, 'get_topics'):
-            print("Loading actual queries from dataset...")
-            topics = dataset.dataset.get_topics()
-
-            print(f"Topics type: {type(topics)}")  # Debugging: Expecting a DataFrame
-            print(f"Topics columns: {topics.columns}")  # Print available columns
-
-            print(f"Total queries available: {len(topics)}")
-            print(topics.head())  # Show first few rows
-
-            query_list = topics['title'].tolist()  # Extract 'title' column as a list
-
-            if len(query_list) == 0:
-                print("Warning: No queries found in the dataset!")
-        else:
-            query_list = [doc.get('title', doc.get('query', '')) for doc in dataset.doc_list[:100]]
-    else:
-        if hasattr(dataset.dataset, 'get_topics'):
-            print("Loading actual queries from dataset...")
-            topics = dataset.dataset.get_topics()
-
-            print(f"Topics type: {type(topics)}")  # Debugging: Expecting a DataFrame
-            print(f"Topics columns: {topics.columns}")  # Print available columns
-
-            print(f"Total queries available: {len(topics)}")
-            print(topics.head())  # Show first few rows
-
-            # Convert DataFrame to list of strings
-            # Keep in mind that qid 1 is now the first query so 0.
-            '''
-            ["title; description; narrative",
-            "title; description; narrative", ...]
-            '''
-            query_list = [
-                f"{row['title']}; {row['description']}; {row['narrative']}"
-                for _, row in topics.iterrows()
-            ]
-
-            if len(query_list) == 0:
-                print("Warning: No queries found in the dataset!")
-        else:
-            query_list = [doc.get('title', doc.get('query', '')) for doc in dataset.doc_list[:100]]
-
-    print(f"Loaded {len(query_list)} queries")
-
-    if fine_tune_with_pseudo_labels_BM25:
-        ranker = self_training_domain_adaptation(
-            ranker=ranker,
-            q_list=query_list,
-            dataset_name=dataset_name,  # target domain (e.g. TREC-COVID)
-            docno_to_abstract=docno_to_abstract,
-            pseudo_top_k=1500,
-            epochs=3,
-            lr=1e-5,
-            device=mydevice,
-            dataset=dataset,
-        )
-        print("Domain adaptation complete.")
-
-        doc_emb, docno_list = processor.process_documents_in_chunks(dataset, ranker, batch_size=batch_size, chunk_size=5000, device=mydevice)
-
-    # Rank queries
-    ranked_results = processor.rank_queries_in_batches(query_list, doc_emb, docno_list, ranker, mydevice, max_docs_per_query_batch=1000)
-
-    # Save results
-    pd.DataFrame(ranked_results).to_csv("ranked_results.csv", index=False)
-    print(f"Processing completed. {len(ranked_results)} ranking entries saved.")
-    return dataset, query_list
-    
-    
-def llm_ranker(queries, dataset):
+def llm_ranker(queries, dataset: IRDataset):
     '''
     This function runs the llm fine-tune layer. It builds upon the neural ranker.
     
     '''
-    # First, we make instances of the LLM_zeroshot and LLM_query_exp classes.
-    llm_zeroshot = LLM_zeroshot()
-    llm_query_exp = LLM_query_exp()
-    
-    # # We first expand the queries using the LLM_query_exp class.
-    # expanded_queries = []
-    # for query in queries:
-    #     expanded_query = llm_query_exp.run(query)
-    #     expanded_queries.append(expanded_query)
-        
+    # Make an instance of the LLM class. This will be used to call the LLM.
+    openai = OpenAILLM()
+
     # First we get the top 100 results for each query from the csv file received from the neural ranker.
-    df = pd.read_csv("ranked_results.csv")
+    df_all = pd.read_csv("rankings\\base_rankings.csv")
     # Optimize the DataFrame by filtering and sorting in one go
     top_100_per_query = (
-        df[df['rank'] <= 100]  # First filter to reduce data size
+        df_all[df_all['rank'] <= 100]  # First filter to reduce data size
         .sort_values(['query_id', 'rank'])  # Sort once globally
         .groupby('query_id', sort=False)  # Disable sorting for speed
         ['docno']
@@ -316,22 +207,132 @@ def llm_ranker(queries, dataset):
     )
     
     # format is {qid: [docno1, docno2, ...], ...}
-    print(f"Top 100 results for each query: {top_100_per_query}")
+    # print(f"Top 100 results for each query: {top_100_per_query}")
     
-    # Get the documents by docno and store them in a list
-    doc_list = []
-    for query_id, docnos in top_100_per_query.items():
-        # Get the documents for each docno
-        docs = [docno for docno in docnos]
-        # Append to the list
-        doc_list.append(docs)         
-        
+    # Dataframe to store the results
+    df_top100 = pd.DataFrame(columns=["qid", "docno", "score"])
     
+    for qid in top_100_per_query:
+        docnos = top_100_per_query[qid]
+        query = queries[qid-1]  # Adjust for zero-based index
+        for docno in docnos:
+            # Get the documents for the current query
+            document = dataset.get_doc(docno)
+            # Compute the score using the LLM (openai gpt-3.5-turbo)
+            score = openai.call(query, document)
+            print(f"Query {qid} and Docno {docno} processed. Result: {score}")
+            # Add the result and qid to the dataframe
+            df_top100 = pd.concat([df_top100, pd.DataFrame({"qid": [qid], "docno": [docno], "score": [score]})], ignore_index=True)
+             
+    # Rank the results based on the score
+    df_top100 = df_top100.sort_values(by=["qid", "score"], ascending=[True, False])
+    # Save the result to a CSV file, with the first line as the column names.
+    df_top100.to_csv("rankings/llm_rankings.csv", mode='a', index=False, header=True)
+           
+# def neural_ranker(fine_tune_with_pseudo_labels_BM25):
+#     batch_size = 64
+#     max_docs = 192509
+#     dataset_name = 'irds:cord19/trec-covid'
+
+#     # Step 1: Check for GPU
+#     mydevice = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#     print(f"Using device: {mydevice}")
+
+#     dataset = IRDataset(dataset_name, max_docs=max_docs)
+
+#     if fine_tune_with_pseudo_labels_BM25:
+#         docno_to_abstract = {
+#             doc['docno']: doc.get('abstract', doc.get('text', ''))
+#             for doc in dataset.doc_list
+#         }
+
+#     # Load Neural Ranker
+#     ranker = NeuralRanker("sentence-transformers/msmarco-bert-base-dot-v5", device=mydevice)
+
+#     processor = Processor()
+
+#     # Process documents
+#     doc_emb, docno_list = processor.process_documents_in_chunks(dataset, ranker, batch_size=batch_size, chunk_size=5000, device=mydevice)
+
+#     print("Document encoding complete. Now ranking queries...")
+
+#     # Load queries safely
+#     query_list = []
+
+#     if fine_tune_with_pseudo_labels_BM25:
+#         if hasattr(dataset.dataset, 'get_topics'):
+#             print("Loading actual queries from dataset...")
+#             topics = dataset.dataset.get_topics()
+
+#             print(f"Topics type: {type(topics)}")  # Debugging: Expecting a DataFrame
+#             print(f"Topics columns: {topics.columns}")  # Print available columns
+
+#             print(f"Total queries available: {len(topics)}")
+#             print(topics.head())  # Show first few rows
+
+#             query_list = topics['title'].tolist()  # Extract 'title' column as a list
+
+#             if len(query_list) == 0:
+#                 print("Warning: No queries found in the dataset!")
+#         else:
+#             query_list = [doc.get('title', doc.get('query', '')) for doc in dataset.doc_list[:100]]
+#     else:
+#         if hasattr(dataset.dataset, 'get_topics'):
+#             print("Loading actual queries from dataset...")
+#             topics = dataset.dataset.get_topics()
+
+#             print(f"Topics type: {type(topics)}")  # Debugging: Expecting a DataFrame
+#             print(f"Topics columns: {topics.columns}")  # Print available columns
+
+#             print(f"Total queries available: {len(topics)}")
+#             print(topics.head())  # Show first few rows
+
+#             # Convert DataFrame to list of strings
+#             # Keep in mind that qid 1 is now the first query so 0.
+#             '''
+#             ["title; description; narrative",
+#             "title; description; narrative", ...]
+#             '''
+#             query_list = [
+#                 f"{row['title']}; {row['description']}; {row['narrative']}"
+#                 for _, row in topics.iterrows()
+#             ]
+
+#             if len(query_list) == 0:
+#                 print("Warning: No queries found in the dataset!")
+#         else:
+#             query_list = [doc.get('title', doc.get('query', '')) for doc in dataset.doc_list[:100]]
+
+#     print(f"Loaded {len(query_list)} queries")
+
+#     if fine_tune_with_pseudo_labels_BM25:
+#         ranker = self_training_domain_adaptation(
+#             ranker=ranker,
+#             q_list=query_list,
+#             dataset_name=dataset_name,  # target domain (e.g. TREC-COVID)
+#             docno_to_abstract=docno_to_abstract,
+#             pseudo_top_k=1500,
+#             epochs=3,
+#             lr=1e-5,
+#             device=mydevice,
+#             dataset=dataset,
+#         )
+#         print("Domain adaptation complete.")
+
+#         doc_emb, docno_list = processor.process_documents_in_chunks(dataset, ranker, batch_size=batch_size, chunk_size=5000, device=mydevice)
+
+#     # Rank queries
+#     ranked_results = processor.rank_queries_in_batches(query_list, doc_emb, docno_list, ranker, mydevice, max_docs_per_query_batch=1000)
+
+#     # Save results
+#     pd.DataFrame(ranked_results).to_csv("ranked_results.csv", index=False)
+#     print(f"Processing completed. {len(ranked_results)} ranking entries saved.")
+#     return dataset, query_list
     
 if __name__ == "__main__":
     # Run the base Neural Ranker to rank queries and documents
     # Extract the queries from the dataset
     # This will be used for the LLM ranker.
     fine_tune_with_pseudo_labels_BM25 = True
-    dataset, query_list = neural_ranker(fine_tune_with_pseudo_labels_BM25)
+    # dataset, query_list = neural_ranker(fine_tune_with_pseudo_labels_BM25)
     # llm_ranker(query_list, dataset)
