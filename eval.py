@@ -44,7 +44,6 @@ def evaluate_rankings(model, dataset_name, metrics_cutoff=10, should_do_per_quer
     # PyTerrier expects: qid, docno, rank, score
     pt_rankings = rankings_df.rename(columns={
         'query_id': 'qid',
-        'rank': 'rank',
         'docno': 'docno', 
         'score': 'score'
     })
@@ -74,7 +73,7 @@ def evaluate_rankings(model, dataset_name, metrics_cutoff=10, should_do_per_quer
     # Evaluate using PyTerrier's newer Evaluate class
     try:
         # Use newer pt.Evaluate approach to avoid the deprecation warning
-        results = pt.Evaluate(pt_rankings, qrels, metrics=metrics, metrics_cutoff=100)
+        results = pt.Evaluate(pt_rankings, qrels, metrics=metrics)
         
         print("\n=== Evaluation Results ===")
         for metric, value in results.items():
