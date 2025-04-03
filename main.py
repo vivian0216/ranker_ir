@@ -5,10 +5,16 @@ import pandas as pd
 from src.neural_ranker.ranker import NeuralRanker
 from src.neural_ranker.import_datasets import GetDataset
 from src.neural_ranker.produce_rankings import IRDataset, Processor
-from src.llm.llm import LLM_zeroshot, LLM_query_exp
+from src.llm.llm import LLM_deepseek, OpenAILLM
 
 
 def neural_ranker():
+    '''
+    This function runs the neural ranker. It builds upon the IRDataset and Processor classes.
+    It loads the dataset, processes the documents, and ranks the queries using the neural ranker.
+    It returns the dataset and the queries.
+    It is the Base Neural Ranker that the project is built upon.
+    '''
     batch_size = 64
     max_docs = 192509
     dataset_name = 'irds:cord19/trec-covid'
@@ -69,26 +75,19 @@ def neural_ranker():
     return dataset, query_list
     
     
-def llm_ranker(queries, dataset):
+def llm_ranker(queries, dataset: IRDataset):
     '''
     This function runs the llm fine-tune layer. It builds upon the neural ranker.
     
     '''
-    # First, we make instances of the LLM_zeroshot and LLM_query_exp classes.
-    llm_zeroshot = LLM_zeroshot()
-    llm_query_exp = LLM_query_exp()
-    
-    # # We first expand the queries using the LLM_query_exp class.
-    # expanded_queries = []
-    # for query in queries:
-    #     expanded_query = llm_query_exp.run(query)
-    #     expanded_queries.append(expanded_query)
-        
+    # Make an instance of the LLM class. This will be used to call the LLM.
+    openai = OpenAILLM()
+
     # First we get the top 100 results for each query from the csv file received from the neural ranker.
-    df = pd.read_csv("ranked_results.csv")
+    df_all = pd.read_csv("ranked_results.csv")
     # Optimize the DataFrame by filtering and sorting in one go
     top_100_per_query = (
-        df[df['rank'] <= 100]  # First filter to reduce data size
+        df_all[df_all['rank'] <= 100]  # First filter to reduce data size
         .sort_values(['query_id', 'rank'])  # Sort once globally
         .groupby('query_id', sort=False)  # Disable sorting for speed
         ['docno']
@@ -97,16 +96,28 @@ def llm_ranker(queries, dataset):
     )
     
     # format is {qid: [docno1, docno2, ...], ...}
-    print(f"Top 100 results for each query: {top_100_per_query}")
+    # print(f"Top 100 results for each query: {top_100_per_query}")
     
-    # Get the documents by docno and store them in a list
-    doc_list = []
-    for query_id, docnos in top_100_per_query.items():
-        # Get the documents for each docno
-        docs = [docno for docno in docnos]
-        # Append to the list
-        doc_list.append(docs)         
-        
+    # Dataframe to store the results
+    df_top100 = pd.DataFrame(columns=["qid", "docno", "score"])
+    
+    for qid in top_100_per_query:
+        docnos = top_100_per_query[qid]
+        query = queries[qid-1]  # Adjust for zero-based index
+        for docno in docnos:
+            # Get the documents for the current query
+            document = dataset.get_doc(docno)
+            # Compute the score using the LLM (openai gpt-3.5-turbo)
+            score = openai.call(query, document)
+            print(f"Query {qid} and Docno {docno} processed. Result: {score}")
+            # Add the result and qid to the dataframe
+            df_top100 = pd.concat([df_top100, pd.DataFrame({"qid": [qid], "docno": [docno], "score": [score]})], ignore_index=True)
+             
+    # Rank the results based on the score
+    df_top100 = df_top100.sort_values(by=["qid", "score"], ascending=[True, False])
+    # Save the result to a CSV file, with the first line as the column names.
+    df_top100.to_csv("llm_results.csv", mode='a', index=False, header=True)
+    
     
     
 if __name__ == "__main__":
@@ -114,4 +125,5 @@ if __name__ == "__main__":
     # Extract the queries from the dataset
     # This will be used for the LLM ranker.
     dataset, query_list = neural_ranker()
-    # llm_ranker(query_list, dataset)
+    
+    llm_ranker(query_list, dataset)

@@ -16,12 +16,14 @@ class IRDataset(Dataset):
         """
         self.dataset = pt.get_dataset(dataset_name)
         self.doc_list = []
+        self.doc_dict = {}
 
         print(f"Loading up to {max_docs} documents from {dataset_name}...")
         for idx, doc in tqdm(enumerate(self.dataset.get_corpus_iter()), total=max_docs, desc="Loading Documents"):
             if max_docs and idx >= max_docs:
                 break  # Stop loading more documents
             self.doc_list.append(doc)  # Store document
+            self.doc_dict[doc['docno']] = doc  # Store document in dictionary for quick access
 
     def __len__(self):
         return len(self.doc_list)
@@ -31,8 +33,13 @@ class IRDataset(Dataset):
         text = f"docno: {doc['docno']}, content: {doc.get('abstract', doc.get('text', ''))}"  # Handle different datasets
         return text, doc['docno']  # Also return docno for saving rankings
     
-    def get_doc(self):
-        pass
+    def get_doc(self, docnos: str):
+        ''' 
+        Returns the document with the given docno.
+        Has O(1) complexity due to the dictionary lookup.
+        :param docno: Document number to retrieve.
+        '''
+        return self.doc_dict.get(docnos, None)  # Return None if docno not found
 
 class Processor():
     def __init__(self):
