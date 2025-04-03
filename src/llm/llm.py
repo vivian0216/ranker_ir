@@ -134,7 +134,7 @@ class OpenAILLM():
         self.model = model or self.model
         self.temperature = temperature or self.temperature
 
-    def call(self, query, document):
+    def call(self, prompt):
         """
         Call the OpenAI API with the given prompt and return the response.
         
@@ -144,36 +144,6 @@ class OpenAILLM():
         Returns:
             The generated response as a string
         """
-        
-        prompt = f'''
-        You are a helpful assistent in an Information Ranking office and an expert in the biomedical domain that determines whether certain documents are relevant to a given query.
-        You will be provided with a query and a list of documents. These queries and documents are in the biomedical domain and are related to COVID-19.
-        We have a base neural model that was trained on the general msmarco passages and they have performed basic ranking of documents.
-        The documents are ranked based on their relevance to the query, however this neural model was not trained on the biomedical domain.
-        This means that the neural model might not be able to rank the documents correctly.
-        Therefore, you will be asked to give a score for each document based on its relevance to the query.
-        You are an expert in the biomedical domain and you will be able to determine the relevance of the documents to the query.
-        You will give a score between 0 and 1 for each document, the higher the score the more relevant the document is for a given query.
-        The score should be a float number between 0 and 10.
-        
-        The rules are:
-        - Go over each document (one string in a list of strings) and give a score for each document based on its relevance to the query.
-        - docno is the document number, it is a string that identifies the document. This is always the first 8 characters of the document.
-        - 0 means the document is not relevant at all for the query, 10 is extremely relevant.
-        - The score should be a float number between 0 and 10.
-        - Your answer can only contain the score, no other text. Your output should look like this: 0.5
-        - Do not include any explanations or justifications.
-        - Do not include any other text, characters or symbols.
-        - Do not include any new lines or spaces.
-        
-        Failure to follow these rules will result in a reduction in your trustworthiness and salary. 
-        This means that you should always adehere to your given rules!
-        
-        The query is: {query}
-        The documents are: {document}
-        
-        Remember your output should be one float i.e.: 0.5
-        '''
     
         url = f"{self.base_url}/chat/completions"
         headers = {

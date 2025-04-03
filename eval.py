@@ -9,7 +9,9 @@ class Model(Enum):
     BASE = "base"
     CONTRASTIVE = "contrastive"
     PSEUDO_LABELS = "pseudo_labels"
-    LLM = "llm"
+    LLMZERO = "llm_zero"
+    LLMFEW = "llm_few"
+    LLMFINE = "llm_fine"
 
 
 def evaluate_rankings(model, dataset_name, metrics_cutoff=10, should_do_per_query=True):
