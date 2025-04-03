@@ -137,7 +137,7 @@ def pseudo_labels_fine_tune(dataset, device):
 
     topics = dataset.dataset.get_topics()
 
-    query_list = [f"{row['title']}; {row['description']}; {row['narrative']}" for _, row in topics.iterrows()]
+    query_list = topics['title'].tolist() 
 
     print(f"Loaded {len(query_list)} queries")
 
