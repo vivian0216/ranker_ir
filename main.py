@@ -1,8 +1,9 @@
 import torch
 import pyterrier as pt
 import pandas as pd
-from torch.utils.data import DataLoader
+import json
 
+from torch.utils.data import DataLoader
 from src.neural_ranker.ranker import NeuralRanker
 from src.neural_ranker.produce_rankings import IRDataset, Processor
 from src.llm.llm import LLM_deepseek, OpenAILLM
@@ -186,13 +187,14 @@ def rank_with_pseudo_labels_model(dataset: IRDataset, mydevice):
     # Save results
     pd.DataFrame(ranked_results).to_csv("rankings\\pseudo_labels_rankings.csv", index=False)
 
-def llm_ranker(queries, dataset: IRDataset):
+def llm_batch_creator(dataset: IRDataset):
     '''
     This function runs the llm fine-tune layer. It builds upon the neural ranker.
     
-    '''
-    # Make an instance of the LLM class. This will be used to call the LLM.
-    openai = OpenAILLM()
+    ''' 
+    # Get the queries
+    topics = dataset.dataset.get_topics()
+    queries = [f"{row['title']}; {row['description']}; {row['narrative']}" for _, row in topics.iterrows()]
 
     # First we get the top 100 results for each query from the csv file received from the neural ranker.
     df_all = pd.read_csv("rankings\\base_rankings.csv")
@@ -209,97 +211,107 @@ def llm_ranker(queries, dataset: IRDataset):
     # format is {qid: [docno1, docno2, ...], ...}
     # print(f"Top 100 results for each query: {top_100_per_query}")
     
-    # Dataframe to store the results
-    df_top100_zero = pd.DataFrame(columns=["query_id", "docno", "score"])
-    df_top100_few = pd.DataFrame(columns=["query_id", "docno", "score"])
-    
-    for qid in top_100_per_query:
-        docnos = top_100_per_query[qid]
-        query = queries[qid-1]  # Adjust for zero-based index
-        for docno in docnos:
-            # Get the documents for the current query
-            document = dataset.get_doc(docno)
-            prompt_zero = f'''
-                You are a helpful assistent in an Information Ranking office and an expert in the biomedical domain that determines whether certain documents are relevant to a given query.
-                You will be provided with a query and a list of documents. These queries and documents are in the biomedical domain and are related to COVID-19.
-                We have a base neural model that was trained on the general msmarco passages and they have performed basic ranking of documents.
-                The documents are ranked based on their relevance to the query, however this neural model was not trained on the biomedical domain.
-                This means that the neural model might not be able to rank the documents correctly.
-                Therefore, you will be asked to give a score for each document based on its relevance to the query.
-                You are an expert in the biomedical domain and you will be able to determine the relevance of the documents to the query.
-                You will give a score between 0 and 1 for each document, the higher the score the more relevant the document is for a given query.
-                The score should be a float number between 0 and 10.
-                
-                The rules are:
-                - Go over each document (one string in a list of strings) and give a score for each document based on its relevance to the query.
-                - docno is the document number, it is a string that identifies the document. This is always the first 8 characters of the document.
-                - 0 means the document is not relevant at all for the query, 10 is extremely relevant.
-                - The score should be a float number between 0 and 10.
-                - Your answer can only contain the score, no other text. Your output should look like this: 0.5
-                - Do not include any explanations or justifications.
-                - Do not include any other text, characters or symbols.
-                - Do not include any new lines or spaces.
-                
-                Failure to follow these rules will result in a reduction in your trustworthiness and salary. 
-                This means that you should always adehere to your given rules!
-                
-                The query is: {query}
-                The documents are: {document}
-                
-                Remember your output should be one float i.e.: 0.5
+    with open("llm_requests.jsonl", "w") as f:
+        for qid in top_100_per_query:
+            docnos = top_100_per_query[qid]
+            query = queries[qid-1]  # Adjust for zero-based index
+            
+            for docno in docnos:
+                # Get the documents for the current query
+                document = dataset.get_doc(docno)
+                prompt_zero = f'''
+                    You are a helpful assistent in an Information Ranking office and an expert in the biomedical domain that determines whether certain documents are relevant to a given query.
+                    You will be provided with a query and a list of documents. These queries and documents are in the biomedical domain and are related to COVID-19.
+                    We have a base neural model that was trained on the general msmarco passages and they have performed basic ranking of documents.
+                    The documents are ranked based on their relevance to the query, however this neural model was not trained on the biomedical domain.
+                    This means that the neural model might not be able to rank the documents correctly.
+                    Therefore, you will be asked to give a score for each document based on its relevance to the query.
+                    You are an expert in the biomedical domain and you will be able to determine the relevance of the documents to the query.
+                    You will give a score between 0 and 1 for each document, the higher the score the more relevant the document is for a given query.
+                    The score should be a float number between 0 and 10.
+                    
+                    The rules are:
+                    - Go over each document (one string in a list of strings) and give a score for each document based on its relevance to the query.
+                    - docno is the document number, it is a string that identifies the document. This is always the first 8 characters of the document.
+                    - 0 means the document is not relevant at all for the query, 10 is extremely relevant.
+                    - The score should be a float number between 0 and 10.
+                    - Your answer can only contain the score, no other text. Your output should look like this: 0.5
+                    - Do not include any explanations or justifications.
+                    - Do not include any other text, characters or symbols.
+                    - Do not include any new lines or spaces.
+                    
+                    Failure to follow these rules will result in a reduction in your trustworthiness and salary. 
+                    This means that you should always adehere to your given rules!
+                    
+                    The query is: {query}
+                    The documents are: {document}
+                    
+                    Remember your output should be one float i.e.: 0.5
+                    '''
+                prompt_few = f'''
+                    You are a helpful assistant in an Information Ranking office and an expert in the biomedical domain that determines whether certain documents are relevant to a given query.
+                    You will be provided with a query and a list of documents. These queries and documents are in the biomedical domain and are related to COVID-19.
+                    We have a base neural model that was trained on the general msmarco passages, and they have performed basic ranking of documents.
+                    However, this neural model was not trained on the biomedical domain, so it might not be able to rank the documents correctly.
+                    You will provide a score between 0 and 10 for each document, where 0 is not relevant and 10 is extremely relevant.
+
+                    Here are some examples:
+
+                    Query: "What are the long-term effects of COVID-19 on the lungs?"
+                    Document: "COVID-19 has been shown to cause long-term lung fibrosis in some patients. Studies indicate that..."
+                    Score: 9.0
+
+                    Query: "Can COVID-19 be treated with antibiotics?"
+                    Document: "Antibiotics are used to treat bacterial infections, but COVID-19 is caused by a virus..."
+                    Score: 2.0
+
+                    Query: "Does wearing masks reduce the spread of COVID-19?"
+                    Document: "Numerous studies confirm that wearing masks significantly reduces transmission of the virus..."
+                    Score: 8.5
+
+                    Now evaluate the following:
+
+                    Query: {query}
+                    Document: {document}
+
+                    Remember, your output should be one float (e.g., 0.5).
                 '''
-            prompt_few = f'''
-                You are a helpful assistant in an Information Ranking office and an expert in the biomedical domain that determines whether certain documents are relevant to a given query.
-                You will be provided with a query and a list of documents. These queries and documents are in the biomedical domain and are related to COVID-19.
-                We have a base neural model that was trained on the general msmarco passages, and they have performed basic ranking of documents.
-                However, this neural model was not trained on the biomedical domain, so it might not be able to rank the documents correctly.
-                You will provide a score between 0 and 10 for each document, where 0 is not relevant and 10 is extremely relevant.
+                
+                for mode, prompt in [("zero", prompt_zero), ("few", prompt_few)]:
+                    req = {
+                        "custom_id": f"{mode}_qid_{qid}_docno_{docno}",
+                        "method": "POST",
+                        "url": "/v1/chat/completions",
+                        "body": {
+                            "model": "gpt-3.5-turbo",
+                            "messages": [{"role": "user", "content": prompt}],
+                            "temperature": 0.0,
+                        }   
+                    }
+                    
+                    f.write(json.dumps(req) + "\n")
+                
+def llm_response_extract():
+    df_zero = []
+    df_few = []
+    
+    with open("llm_batch_output.jsonl", "r") as f:
+        for line in f:
+            resp = json.loads(line)
+            cid = resp["custom_id"]
+            score = resp.get("response", {}).get("choices", [{}])[0].get("message", {}).get("content", "0.0")
 
-                Here are some examples:
+            mode, qid_str, _, docno = cid.split("_")
+            qid = int(qid_str)
 
-                Query: "What are the long-term effects of COVID-19 on the lungs?"
-                Document: "COVID-19 has been shown to cause long-term lung fibrosis in some patients. Studies indicate that..."
-                Score: 9.0
-
-                Query: "Can COVID-19 be treated with antibiotics?"
-                Document: "Antibiotics are used to treat bacterial infections, but COVID-19 is caused by a virus..."
-                Score: 2.0
-
-                Query: "Does wearing masks reduce the spread of COVID-19?"
-                Document: "Numerous studies confirm that wearing masks significantly reduces transmission of the virus..."
-                Score: 8.5
-
-                Now evaluate the following:
-
-                Query: {query}
-                Document: {document}
-
-                Remember, your output should be one float (e.g., 0.5).
-            '''
-            
-            # Compute the score using the LLM (openai gpt-3.5-turbo)
-            score_zero = openai.call(prompt_zero)
-            score_few = openai.call(prompt_few)
-            
-            # Force the scores to be float values
-            try:
-                score_zero = float(score_zero)
-                score_few = float(score_few)
-            except ValueError:
-                score_zero = 0.0
-                score_few = 0.0
-            
-            # Logging purposes
-            print(f"Zero-shot: Query {qid} and Docno {docno} processed. Result: {score_zero}")
-            print(f"Few-shot: Query {qid} and Docno {docno} processed. Result: {score_few}")
-            
-            # Add the result and qid to the dataframe
-            df_top100_zero = pd.concat([df_top100_zero, pd.DataFrame({"query_id": [qid], "docno": [docno], "score": [score_zero]})], ignore_index=True)
-            df_top100_few = pd.concat([df_top100_few, pd.DataFrame({"query_id": [qid], "docno": [docno], "score": [score_few]})], ignore_index=True)
-            
-    # Rank the results based on the score
-    df_top100_zero = df_top100_zero.sort_values(by=["query_id", "score"], ascending=[True, False])
-    df_top100_few = df_top100_few.sort_values(by=["query_id", "score"], ascending=[True, False])
+            if mode == "zero":
+                df_zero.append({"query_id": qid, "docno": docno, "score": score})
+            else:
+                df_few.append({"query_id": qid, "docno": docno, "score": score})
+                
+    df_top100_zero = pd.DataFrame(df_zero).sort_values(by=["query_id", "score"], ascending=[True, False])
+    df_top100_few = pd.DataFrame(df_few).sort_values(by=["query_id", "score"], ascending=[True, False])
+    
     # Save the result to a CSV file, with the first line as the column names.
     df_top100_zero.to_csv("rankings/llm_zero_rankings.csv", mode='a', index=False, header=True)
     df_top100_few.to_csv("rankings/llm_few_rankings.csv", mode='a', index=False, header=True)
