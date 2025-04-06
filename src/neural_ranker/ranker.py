@@ -56,7 +56,7 @@ class NeuralRanker(nn.Module):
         return embeddings
     
     # Fine-tune method for self-training with pseudo-labels
-    def fine_tune(self, psdo_labels, epochs=20, lr=1e-5, dist=0.5):
+    def fine_tune(self, psdo_labels, epochs=20, lr=1e-5, dist=0.5, cosine_loss = True, pairwise_logistic_loss = False, margin_loss = False):
         # Set the model to training mode
         self.model.train()
         optim = torch.optim.Adam(self.model.parameters(), lr=lr)
@@ -71,10 +71,6 @@ class NeuralRanker(nn.Module):
                 
                 if 'abstract' not in psdo_data.columns:
                     continue
-                # not sure why but affects performance greatly
-                doc_texts = psdo_data['abstract'].tolist()
-                
-                doc_embeddings = self.encode(doc_texts)
                 
                 # ensure there are at least two documents to form a positive and a negative pair
                 if psdo_data.shape[0] < 2:
@@ -92,9 +88,18 @@ class NeuralRanker(nn.Module):
                 # compute cosine similarities (each will be a tensor of shape [1])
                 sim_positive = F.cosine_similarity(q_emb, positive_embedding, dim=1)
                 sim_negative = F.cosine_similarity(q_emb, negative_embedding, dim=1)
-                
-                # we want sim_pos to be higher than sim_neg by at least margin on averagae
-                loss = F.relu(dist - sim_positive + sim_negative).mean()  
+
+                if cosine_loss:
+                    # we want sim_pos to be higher than sim_neg by at least margin on averagae
+                    loss = F.relu(dist - sim_positive + sim_negative).mean()
+                elif pairwise_logistic_loss:
+                    diff = sim_positive - sim_negative
+                    prob = torch.sigmoid(diff)
+                    loss = -torch.log(prob).mean()
+                elif margin_loss:
+                    margin_ranking_loss = torch.nn.MarginRankingLoss(margin=dist)
+                    target = torch.ones_like(sim_positive)  # we expect sim_positive > sim_negative
+                    loss = margin_ranking_loss(sim_positive, sim_negative, target)
                 
                 optim.zero_grad()
                 loss.backward()
@@ -104,5 +109,42 @@ class NeuralRanker(nn.Module):
             print(f"Epoch {epoch+1}/{epochs} - Loss: {epoch_loss:.4f}")
 
         # Set the model back to evaluation mode
+        self.model.eval()
+        return self
+
+    # Fine-tuning with negative sampling using pairwise margin-based loss.
+    def fine_tune_posneg(self, pseudo_data, epochs=20, learning_rate=1e-5, margin=0.5, device=None):
+        self.model.train()
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
+        dev = device if device else self.device
+
+        for epoch in range(epochs):
+            epoch_loss = 0.0
+            for item in pseudo_data:
+                query_text = item["query"]
+                docs_df = item["docs"]
+                pos_df = docs_df[docs_df["label"] == 1]
+                neg_df = docs_df[docs_df["label"] == 0]
+                if pos_df.empty or neg_df.empty:
+                    continue
+                q_emb = self.encode([query_text], grad_enabled=True).to(dev)
+                total_loss = 0.0
+                num_pairs = min(len(pos_df), len(neg_df))
+                for i in range(num_pairs):
+                    pos_text = pos_df.iloc[i]["abstract"]
+                    neg_text = neg_df.iloc[i]["abstract"]
+                    pos_emb = self.encode([pos_text], grad_enabled=True).to(dev)
+                    neg_emb = self.encode([neg_text], grad_enabled=True).to(dev)
+                    sim_pos = F.cosine_similarity(q_emb, pos_emb, dim=1)
+                    sim_neg = F.cosine_similarity(q_emb, neg_emb, dim=1)
+                    loss = F.relu(margin - (sim_pos - sim_neg)).mean()
+                    total_loss += loss
+                if num_pairs > 0:
+                    total_loss /= num_pairs
+                optimizer.zero_grad()
+                total_loss.backward()
+                optimizer.step()
+                epoch_loss += total_loss.item()
+            print(f"Epoch {epoch+1}/{epochs} - PosNeg Loss: {epoch_loss:.4f}")
         self.model.eval()
         return self

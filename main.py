@@ -2,6 +2,7 @@ import torch
 import pyterrier as pt
 import pandas as pd
 import json
+import os
 
 from torch.utils.data import DataLoader
 from src.neural_ranker.ranker import NeuralRanker
@@ -141,19 +142,32 @@ def pseudo_labels_fine_tune(dataset, device):
 
     print(f"Loaded {len(query_list)} queries")
 
+    docno_to_abstract = {
+        doc['docno']: doc.get('abstract', doc.get('text', ''))
+        for doc in dataset.doc_list
+    }
+
     ranker = self_training_domain_adaptation(
         ranker=ranker,
         q_list=query_list,
-        dataset_name='irds:cord19/trec-covid',  # target domain (e.g. TREC-COVID)
-        docno_to_abstract={},
-        pseudo_top_k=1500,
-        epochs=3,
-        lr=1e-5,
-        device=device,
+        dataset_name='irds:cord19/trec-covid',
         dataset=dataset,
+        docno_to_abstract=docno_to_abstract,
+        pseudo_top_k=10,
+        pseudo_bottom_k=5,
+        epochs=10,
+        learning_rate=1e-5,
+        device=device,
+        use_negative_sampling=True,
+        cosine_loss=False,
+        pairwise_logistic_loss=True,
+        margin_loss=False,
+        idx_path="index/trec-covid",
     )
     print("Domain adaptation complete.")
 
+    if not os.path.exists("models"):
+        os.makedirs("models")
     model_path = f"models/pseudo_labels_model.pt"
     print(f"\nSaving model to {model_path}...")
     torch.save(ranker.state_dict(), model_path)
@@ -168,7 +182,7 @@ def rank_with_pseudo_labels_model(dataset: IRDataset, mydevice):
     processor = Processor()
     
     doc_embeddings_file = "embeddings\\pseudo_labels_doc_embeddings.pt"
-    docnos_file = "embeddings\\pseudo_labels_docnos.pt"
+    docnos_file = "embeddings\\pseudo_labels_docnos.json"
 
     doc_emb, docnos = processor.process_documents_in_chunks(dataset, ranker, batch_size=16, chunk_size=5000, device=mydevice,
                                                             doc_embeddings_file=doc_embeddings_file,
