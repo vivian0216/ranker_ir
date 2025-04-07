@@ -99,7 +99,7 @@ class LLM_deepseek():
         
     
 class OpenAILLM():
-    model: str = "gpt-4o-mini"
+    model: str = "gpt-3.5-turbo"
     temperature: float = 0.7
     base_url: str = "https://api.openai.com/v1"
     api_key: Optional[str] = None
