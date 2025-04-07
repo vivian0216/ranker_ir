@@ -1,3 +1,4 @@
+import gc
 import torch
 import pyterrier as pt
 import pandas as pd
@@ -42,7 +43,7 @@ def rank_with_base_model(dataset: IRDataset, mydevice):
 def contrastive_train_neural_ranker(
     dataset_name='irds:beir/trec-covid',
     model_name="sentence-transformers/msmarco-bert-base-dot-v5",
-    batch_size=2,
+    batch_size=4,
     epochs=3,
     device=None,
 ):
@@ -93,7 +94,7 @@ def contrastive_train_neural_ranker(
     trainer = ContrastiveTrainer(encoder, lr=2e-5, device=device)
 
     # Train for specified epochs
-    trainer.train(dataloader, epochs=epochs)
+    trainer.train_memory_optimized(dataloader, epochs=epochs)
 
     model_path = f"models/contrastive_model.pt"
     print(f"\nSaving model to {model_path}...")
@@ -102,6 +103,9 @@ def contrastive_train_neural_ranker(
 
 def rank_with_contrastive_model(dataset: IRDataset, mydevice):
     ranker = NeuralRanker("sentence-transformers/msmarco-bert-base-dot-v5", device=mydevice)
+
+    gc.collect()
+    torch.cuda.empty_cache()
 
     # after training contrastive model, load the domain-adapted model
     ranker.load_state_dict(torch.load("models/contrastive_model.pt", map_location=mydevice))
