@@ -48,6 +48,7 @@ def contrastive_train_neural_ranker(
     batch_size=4,
     epochs=3,
     device=None,
+    early_stop_threshold=0.01,
 ):
     # Check for GPU
     if device is None:
@@ -96,7 +97,7 @@ def contrastive_train_neural_ranker(
     trainer = ContrastiveTrainer(encoder, lr=2e-5, device=device)
 
     # Train for specified epochs
-    trainer.train_memory_optimized(dataloader, epochs=epochs)
+    trainer.train_memory_optimized(dataloader, epochs=epochs, batch_size=batch_size, early_stop_threshold=early_stop_threshold)
 
     model_path = f"models/contrastive_model.pt"
     print(f"\nSaving model to {model_path}...")
