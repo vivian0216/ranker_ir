@@ -1,10 +1,13 @@
 import requests
 import re
 import os
+import time
+import tiktoken
 
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
+from collections import deque
 
 class OllamaLLM():
     def __init__(self, model: str, temperature: float):
@@ -133,6 +136,49 @@ class OpenAILLM():
 
         self.model = model or self.model
         self.temperature = temperature or self.temperature
+        self.MAX_TOKENS_PER_MINUTE: int = 90000
+        self.MAX_REQUESTS_PER_MINUTE = 60
+        # Token tracking
+        self.token_usage = deque()
+        self.request_timestamps = deque()
+
+        # Init tokenizer
+        self.encoding = tiktoken.encoding_for_model(model)
+
+    def count_tokens(self, text: str) -> int:
+        return len(self.encoding.encode(text))
+
+    def wait_if_necessary(self, tokens_needed: int):
+        current_time = time.time()
+
+        # Remove old entries outside of the 60-second window
+        while self.token_usage and current_time - self.token_usage[0][0] > 60:
+            self.token_usage.popleft()
+        while self.request_timestamps and current_time - self.request_timestamps[0] > 60:
+            self.request_timestamps.popleft()
+
+        # Total tokens and requests in last 60s
+        tokens_used_last_minute = sum(t for _, t in self.token_usage)
+        requests_last_minute = len(self.request_timestamps)
+
+        # Check if we’re going over
+        while (
+            tokens_used_last_minute + tokens_needed > self.MAX_TOKENS_PER_MINUTE or
+            requests_last_minute + 1 > self.MAX_REQUESTS_PER_MINUTE
+        ):
+            sleep_time = 1
+            print(f"Sleeping {sleep_time}s to respect OpenAI rate limits...")
+            time.sleep(sleep_time)
+
+            # Update window
+            current_time = time.time()
+            while self.token_usage and current_time - self.token_usage[0][0] > 60:
+                self.token_usage.popleft()
+            while self.request_timestamps and current_time - self.request_timestamps[0] > 60:
+                self.request_timestamps.popleft()
+            tokens_used_last_minute = sum(t for _, t in self.token_usage)
+            requests_last_minute = len(self.request_timestamps)
+
 
     def call(self, prompt):
         """
@@ -144,6 +190,12 @@ class OpenAILLM():
         Returns:
             The generated response as a string
         """
+        
+        prompt_tokens = self.count_tokens(prompt)
+        response_tokens_esitmate = 12
+        total_tokens = prompt_tokens + response_tokens_esitmate
+        
+        self.wait_if_necessary(total_tokens)
     
         url = f"{self.base_url}/chat/completions"
         headers = {
@@ -166,8 +218,11 @@ class OpenAILLM():
         }
 
         response = requests.post(url, json=payload, headers=headers)
+        # Record the token usage and timestamp
+        self.token_usage.append((time.time(), total_tokens))
+        self.request_timestamps.append(time.time())
 
-        if response.status_code == 200:
+        if response.status_code == 200: 
             return response.json()["choices"][0]["message"]["content"]
         else:
             raise Exception(f"Error: {response.status_code}, {response.text}")  
