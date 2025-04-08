@@ -45,7 +45,7 @@ def rank_with_base_model(dataset: IRDataset, mydevice):
 
 
 def contrastive_train_neural_ranker(
-    dataset_name='irds:beir/trec-covid',
+    dataset_name='irds:cord19/trec-covid',
     model_name="sentence-transformers/msmarco-bert-base-dot-v5",
     batch_size=4,
     epochs=3,
@@ -163,7 +163,7 @@ def pseudo_labels_fine_tune(dataset, device):
         pseudo_top_k=10,
         pseudo_bottom_k=5,
         epochs=10,
-        learning_rate=1e-5,
+        lr=1e-5,
         device=device,
         use_negative_sampling=True,
         cosine_loss=False,
