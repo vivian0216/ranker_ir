@@ -9,6 +9,9 @@ class Model(Enum):
     BASE = "base"
     CONTRASTIVE = "contrastive"
     PSEUDO_LABELS = "pseudo_labels"
+    TOP_100_BASE = "top_100_base"
+    TOP_100_CONTRASTIVE = "top_100_contrastive"
+    TOP_100_PSEUDO_LABELS = "top_100_pseudo_labels"
     LLMZERO = "llm_zero"
     LLMFEW = "llm_few"
 
