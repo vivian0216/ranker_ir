@@ -8,4 +8,4 @@ Low-Resource IR Scenarios
 3. Input your OpenAI API key as following:
     OPENAI_API_KEY=YOURKEY
 4. See the experiment.ipynb notebook to run the full code.
-5. Some files were too large to push on github, like the embeddings, but they are generated when running the code and saved in the corresponding folders.
+5. Some files were too large to push on github, like the embeddings, models and rankings, but they are generated when running the code and saved in the corresponding folders.
