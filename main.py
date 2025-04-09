@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from src.neural_ranker.ranker import NeuralRanker
 from src.neural_ranker.produce_rankings import IRDataset, Processor
 from src.llm.llm import LLM_deepseek, OpenAILLM
-from domain_adaptation import self_training_domain_adaptation
+from domain_adaptation import self_training_domain_adaptation, iterative_self_training_domain_adaptation
 from src.neural_ranker.contrastive import ContrastiveDataset, ContrastiveTrainer, load_domain_texts
 from src.neural_ranker.produce_rankings import IRDataset
 from src.neural_ranker.ranker import NeuralRanker
@@ -153,7 +153,7 @@ def pseudo_labels_fine_tune(dataset, device):
         doc['docno']: doc.get('abstract', doc.get('text', ''))
         for doc in dataset.doc_list
     }
-
+    # generate BM25 pseudo labels once
     ranker = self_training_domain_adaptation(
         ranker=ranker,
         q_list=query_list,
@@ -166,11 +166,31 @@ def pseudo_labels_fine_tune(dataset, device):
         lr=1e-5,
         device=device,
         use_negative_sampling=True,
-        cosine_loss=False,
-        pairwise_logistic_loss=True,
+        cosine_loss=True,
+        pairwise_logistic_loss=False,
         margin_loss=False,
         idx_path="index/trec-covid",
     )
+
+    # uncomment for generating pseudo labels multiple times and using a weighted loss function
+    # ranker = iterative_self_training_domain_adaptation(
+    #     ranker=ranker,
+    #     q_list=query_list,
+    #     dataset_name='irds:cord19/trec-covid',
+    #     dataset=dataset,
+    #     docno_to_abstract=docno_to_abstract,
+    #     pseudo_top_k=10,
+    #     iterations=3,
+    #     pseudo_bottom_k=5,
+    #     fine_tune_epochs=3,
+    #     lr=1e-5,
+    #     device=device,
+    #     use_negative_sampling=False,
+    #     cosine_loss=True,
+    #     pairwise_logistic_loss=False,
+    #     margin_loss=False,
+    #     idx_path="index/trec-covid",
+    # )
     print("Domain adaptation complete.")
 
     if not os.path.exists("models"):
@@ -189,7 +209,7 @@ def rank_with_pseudo_labels_model(dataset: IRDataset, mydevice):
     processor = Processor()
     
     doc_embeddings_file = "embeddings\\pseudo_labels_doc_embeddings.pt"
-    docnos_file = "embeddings\\pseudo_labels_docnos.json"
+    docnos_file = "embeddings\\pseudo_labels_docnos.pt"
 
     doc_emb, docnos = processor.process_documents_in_chunks(dataset, ranker, batch_size=16, chunk_size=5000, device=mydevice,
                                                             doc_embeddings_file=doc_embeddings_file,

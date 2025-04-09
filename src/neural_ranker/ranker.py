@@ -113,22 +113,25 @@ class NeuralRanker(nn.Module):
         return self
 
     # Fine-tuning with negative sampling using pairwise margin-based loss.
-    def fine_tune_posneg(self, pseudo_data, epochs=20, learning_rate=1e-5, margin=0.5, device=None):
+    def fine_tune_posneg(self, psdo_labels, epochs=20, learning_rate=1e-5, margin=0.5, device=None, cosine_loss = True, pairwise_logistic_loss = False, margin_loss = False):
         self.model.train()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
         dev = device if device else self.device
 
         for epoch in range(epochs):
             epoch_loss = 0.0
-            for item in pseudo_data:
-                query_text = item["query"]
-                docs_df = item["docs"]
-                pos_df = docs_df[docs_df["label"] == 1]
-                neg_df = docs_df[docs_df["label"] == 0]
+            for item in psdo_labels:
+                q_text = item["query"]
+                d_df = item["docs"]
+                # set positive and negative labels
+                pos_df = d_df[d_df["label"] == 1]
+                neg_df = d_df[d_df["label"] == 0]
                 if pos_df.empty or neg_df.empty:
                     continue
-                q_emb = self.encode([query_text], grad_enabled=True).to(dev)
+                # encode the query once with gradients enabled
+                q_emb = self.encode([q_text], grad_enabled=True).to(dev)
                 total_loss = 0.0
+                # ensure there are enough documents to split into two groups
                 num_pairs = min(len(pos_df), len(neg_df))
                 for i in range(num_pairs):
                     pos_text = pos_df.iloc[i]["abstract"]
@@ -137,8 +140,18 @@ class NeuralRanker(nn.Module):
                     neg_emb = self.encode([neg_text], grad_enabled=True).to(dev)
                     sim_pos = F.cosine_similarity(q_emb, pos_emb, dim=1)
                     sim_neg = F.cosine_similarity(q_emb, neg_emb, dim=1)
-                    loss = F.relu(margin - (sim_pos - sim_neg)).mean()
-                    total_loss += loss
+                    if cosine_loss:
+                        # we want sim_pos to be higher than sim_neg by at least margin on averagae
+                        loss = F.relu(margin - sim_pos + sim_neg).mean()
+                    elif pairwise_logistic_loss:
+                        diff = sim_pos - sim_neg
+                        prob = torch.sigmoid(diff)
+                        loss = -torch.log(prob).mean()
+                    elif margin_loss:
+                        margin_ranking_loss = torch.nn.MarginRankingLoss(margin=margin)
+                        target = torch.ones_like(sim_pos)  # we expect sim_positive > sim_negative
+                        loss = margin_ranking_loss(sim_pos, sim_neg, target)
+                        total_loss += loss
                 if num_pairs > 0:
                     total_loss /= num_pairs
                 optimizer.zero_grad()
@@ -146,5 +159,78 @@ class NeuralRanker(nn.Module):
                 optimizer.step()
                 epoch_loss += total_loss.item()
             print(f"Epoch {epoch+1}/{epochs} - PosNeg Loss: {epoch_loss:.4f}")
+        self.model.eval()
+        return self
+    
+    # Fine-tuning with weighted loss based on BM25 scores
+    def fine_tune_weighted(self, pseudo_labels, epochs=20, lr=1e-5, margin=0.5):
+        # Set the model to training mode
+        self.model.train()
+        optim = torch.optim.Adam(self.model.parameters(), lr=lr)
+
+        for epoch in range(epochs):
+            epoch_loss = 0.0
+            # loop over each q and its psdo labels
+            for q, psdo_data in pseudo_labels.items():
+                if 'abstract' not in psdo_data.columns or 'score' not in psdo_data.columns:
+                    print("Required columns not found")
+                    continue
+
+                # enc the q once with grad
+                q_emb = self.encode([q], grad_enabled=True)
+
+                # Ensure there are enough documents to split into two groups
+                if psdo_data.shape[0] < 2:
+                    continue
+
+                # Det the split index (e.g., half of the pseudo labels)
+                split_idx = psdo_data.shape[0] // 2
+                pos_data = psdo_data.iloc[:split_idx]
+                neg_data = psdo_data.iloc[split_idx:]
+
+                loss_sum = 0.0
+                total_weight = 0.0
+
+                # It over all pos pairs
+                for _, pos_row in pos_data.iterrows():
+                    pos_text = pos_row['abstract']
+                    pos_score = pos_row['score']
+                    # Enc pos doc with grad
+                    pos_emb = self.encode([pos_text], grad_enabled=True)
+                    # it over all neg pairs
+                    for _, neg_row in neg_data.iterrows():
+                        neg_text = neg_row['abstract']
+                        neg_score = neg_row['score']
+                        # Enc neg docs
+                        neg_emb = self.encode([neg_text], grad_enabled=True)
+
+                        # Compute cosine similarities
+                        sim_pos = F.cosine_similarity(q_emb, pos_emb, dim=1)
+                        sim_neg = F.cosine_similarity(q_emb, neg_emb, dim=1)
+
+                        # Compute margin ranking loss for this pair
+                        loss_pair = F.relu(margin - sim_pos + sim_neg)
+
+                        # Calculate a weight based on the BM25 score difference
+                        # The sigmoid ensures the weight is between 0 and 1
+                        weight = torch.sigmoid(torch.tensor(pos_score - neg_score, dtype=torch.float32, device=self.device))
+                        
+                        loss_sum += weight * loss_pair
+                        total_weight += weight
+
+                if total_weight > 0:
+                    # Compute the weighted average loss over all pairs
+                    loss = loss_sum / total_weight
+                else:
+                    continue
+
+                optim.zero_grad()
+                loss.backward()
+                optim.step()
+
+                epoch_loss += loss.item()
+            print(f"Epoch {epoch+1}/{epochs} - Loss: {epoch_loss:.4f}")
+
+        # Set the model back to evaluation mode
         self.model.eval()
         return self
