@@ -147,7 +147,7 @@ def self_training_domain_adaptation(ranker, q_list, dataset_name, dataset, docno
         
         print("Starting fine-tuning with negative sampling...")
         ranker.fine_tune_posneg(
-            pseudo_data=pseudo_data,
+            psdo_labels=pseudo_data,
             epochs=epochs,
             learning_rate=lr,
             margin=0.5,

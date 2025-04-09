@@ -151,7 +151,7 @@ class NeuralRanker(nn.Module):
                         margin_ranking_loss = torch.nn.MarginRankingLoss(margin=margin)
                         target = torch.ones_like(sim_pos)  # we expect sim_positive > sim_negative
                         loss = margin_ranking_loss(sim_pos, sim_neg, target)
-                        total_loss += loss
+                    total_loss += loss
                 if num_pairs > 0:
                     total_loss /= num_pairs
                 optimizer.zero_grad()
