@@ -1,5 +1,4 @@
-# Efficient Domain Adaptation for
-Low-Resource IR Scenarios
+# Efficient Domain Adaptation for Low-Resource IR Scenarios
 
 ## The Experiment is done in the experiment python notebook
 1. Set up environment in Python3.12, download the requirements.txt
